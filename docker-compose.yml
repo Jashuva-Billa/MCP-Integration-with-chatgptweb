@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build: .
+    container_name: mcp-chatgpt-server
+    ports:
+      - "8766:8766"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8766
+      - MCP_AUTH_ENABLED=false
+      - MCP_LOG_LEVEL=INFO
+    volumes:
+      - ./config:/app/config
+      - /c/Development:/workspaces:ro
+    restart: unless-stopped

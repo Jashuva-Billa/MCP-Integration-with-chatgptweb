@@ -1,0 +1,19 @@
+{
+  "repositories": {
+    "interview-copilot": {
+      "path": "C:/Users/Jashuva/Desktop/interview-copilot",
+      "description": "Real-time AI voice copilot repository",
+      "enabled": true
+    },
+    "AI_jobs_apply": {
+      "path": "C:/Development/AI_jobs_apply",
+      "description": "Job application automation workspace",
+      "enabled": true
+    },
+    "agentic-sdlc": {
+      "path": "C:/Development/agentic-sdlc",
+      "description": "Multi-agent autonomous SDLC workspace",
+      "enabled": true
+    }
+  }
+}
