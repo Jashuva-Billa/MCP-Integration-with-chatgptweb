@@ -72,7 +72,8 @@ def start():
         time.sleep(1)
         if check_health(host, port):
             print(f"[OK] MCP Server is running and healthy on http://{host}:{port}/health")
-            print(f"[*] MCP Endpoint: http://{host}:{port}/sse (alias: /mcp)")
+            print(f"[*] Streamable HTTP: http://{host}:{port}/mcp")
+            print(f"[*] SSE Endpoint:    http://{host}:{port}/sse")
             return True
         if proc.poll() is not None:
             print(f"[ERROR] MCP Server exited prematurely with exit code {proc.returncode}.")
@@ -119,10 +120,11 @@ def status():
     print("=" * 55)
     print("           MCP SERVER RUNTIME STATUS")
     print("=" * 55)
-    print(f"Status:       {'[RUNNING]' if running else '[STOPPED]'} (PID: {pid})")
-    print(f"Health:       {'[OK]' if healthy else '[FAILED / UNREACHABLE]'}")
-    print(f"Local URL:    http://{host}:{port}")
-    print(f"Endpoint:     http://{host}:{port}/sse")
+    print(f"Status:          {'[RUNNING]' if running else '[STOPPED]'} (PID: {pid})")
+    print(f"Health:          {'[OK]' if healthy else '[FAILED / UNREACHABLE]'}")
+    print(f"Local URL:       http://{host}:{port}")
+    print(f"Streamable HTTP: http://{host}:{port}/mcp")
+    print(f"SSE Endpoint:    http://{host}:{port}/sse")
     print("=" * 55)
 
 if __name__ == "__main__":

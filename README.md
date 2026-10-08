@@ -87,7 +87,8 @@ Edit `config/repositories.json` to register your local projects:
 python scripts/start.py
 ```
 *Health Check:* `http://127.0.0.1:8766/health`  
-*MCP Endpoint:* `http://127.0.0.1:8766/sse` (alias: `/mcp`)
+*Streamable HTTP Transport:* `http://127.0.0.1:8766/mcp`  
+*SSE Transport:* `http://127.0.0.1:8766/sse`  
 
 ### Option B: Start Server with Public HTTPS Tunnel (for ChatGPT Web)
 ```powershell
@@ -99,7 +100,8 @@ python scripts/tunnel.py
        CLOUDFLARE SECURE HTTPS MCP TUNNEL ACTIVE
 ======================================================================
 Public Base URL:  https://<random-id>.trycloudflare.com
-MCP Endpoint:     https://<random-id>.trycloudflare.com/sse
+Streamable HTTP:  https://<random-id>.trycloudflare.com/mcp
+SSE Endpoint:     https://<random-id>.trycloudflare.com/sse
 Health Check:     https://<random-id>.trycloudflare.com/health
 ======================================================================
 ```
@@ -111,9 +113,8 @@ Health Check:     https://<random-id>.trycloudflare.com/health
 1. Open **ChatGPT Web** in your browser.
 2. Navigate to **Settings** → **Connected apps** / **Developer Mode Connectors** / **Custom GPT Actions**.
 3. Under **MCP Server Endpoint**, paste the generated URL:
-   ```
-   https://<random-id>.trycloudflare.com/sse
-   ```
+   - For **Streamable HTTP** (recommended): `https://<random-id>.trycloudflare.com/mcp`
+   - For **SSE Transport**: `https://<random-id>.trycloudflare.com/sse`
 4. **Authentication**:
    - If `MCP_AUTH_ENABLED=true` is set in `.env`, choose **Bearer Token** and enter your `MCP_AUTH_TOKEN`.
    - If authentication is disabled for local testing, choose **Anonymous / None**.
