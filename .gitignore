@@ -34,3 +34,10 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Local Configuration & Repository Registry
+config/repositories.json
+config/repositories.yaml
+!config/repositories.example.json
+!config/repositories.example.yaml
+
