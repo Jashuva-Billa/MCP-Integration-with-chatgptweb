@@ -47,13 +47,35 @@ class WorkstreamManager:
         return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True,
                               timeout=timeout, check=False)
 
-    def create(self, task_id: str, worker_name: str, base_ref: str = "HEAD") -> dict[str, Any]:
+    def _ensure_worktree_ignored(self, root: Path) -> None:
+        check = self._git(["check-ignore", "--quiet", ".mcp-worktrees/"], root)
+        if check.returncode == 0:
+            return
+        exclude_result = self._git(["rev-parse", "--git-path", "info/exclude"], root)
+        if exclude_result.returncode != 0:
+            raise RuntimeError("Could not locate repository-local Git exclude file for isolated worktrees")
+        exclude_path = Path(exclude_result.stdout.strip())
+        if not exclude_path.is_absolute():
+            exclude_path = (root / exclude_path).resolve()
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+        if "/.mcp-worktrees/" not in existing.splitlines() and ".mcp-worktrees/" not in existing.splitlines():
+            updated = existing.rstrip() + "\n\n# MCP-managed isolated coding worktrees\n/.mcp-worktrees/\n"
+            temp = exclude_path.with_suffix(".mcp-exclude.tmp")
+            temp.write_text(updated, encoding="utf-8")
+            temp.replace(exclude_path)
+
+    def create(self, task_id: str, worker_name: str, base_ref: str = "HEAD",
+               repository_root: str | Path | None = None, repository_name: str | None = None,
+               parent_task_id: str | None = None) -> dict[str, Any]:
         policy_engine.require_git_worktree()
         if not _SAFE_NAME.fullmatch(task_id) or not _SAFE_NAME.fullmatch(worker_name):
             raise ValueError("task_id and worker_name must be 1-40 safe letters, digits, underscores, or hyphens")
-        if base_ref != "HEAD":
-            raise ValueError("Only base_ref='HEAD' is supported; arbitrary refs are not accepted")
-        root = Path(session_manager.get_active_repo_path()).resolve()
+        if base_ref != "HEAD" and not re.fullmatch(r"[0-9a-fA-F]{40}", base_ref):
+            raise ValueError("base_ref must be HEAD or a full 40-character commit SHA")
+        root = Path(repository_root or session_manager.get_active_repo_path()).resolve(strict=True)
+        repo_name = repository_name or session_manager.get_active_repo_name()
+        self._ensure_worktree_ignored(root)
         branch = f"mcp-work/{task_id}/{worker_name}"
         worktree_path = (root / ".mcp-worktrees" / f"{task_id}-{worker_name}").resolve()
         if root not in worktree_path.parents:
@@ -63,16 +85,20 @@ class WorkstreamManager:
         branch_check = self._git(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], root)
         if branch_check.returncode == 0:
             raise ValueError(f"Branch '{branch}' already exists")
-        base = self._git(["rev-parse", "HEAD"], root)
+        base = self._git(["rev-parse", "--verify", f"{base_ref}^{{commit}}"], root)
         if base.returncode != 0:
-            raise ValueError("Could not resolve the repository HEAD")
+            raise ValueError("Could not resolve the requested worktree base commit")
+        base_revision = base.stdout.strip()
+        if base_ref != "HEAD" and base_revision.lower() != base_ref.lower():
+            raise ValueError("Explicit base_ref must resolve to the exact full commit SHA")
         status = self._git(["status", "--porcelain"], root)
-        result = self._git(["worktree", "add", "-b", branch, str(worktree_path), "HEAD"], root, timeout=60)
+        result = self._git(["worktree", "add", "-b", branch, str(worktree_path), base_revision], root, timeout=60)
         if result.returncode != 0:
             raise RuntimeError("Git could not create the isolated worktree")
         row = {
-            "id": uuid.uuid4().hex[:12], "task_id": task_id, "worker_name": worker_name,
-            "repository": session_manager.get_active_repo_name(), "repository_root": str(root),
+            "id": uuid.uuid4().hex[:12], "task_id": task_id,
+            "parent_task_id": parent_task_id or task_id, "worker_name": worker_name,
+            "repository": repo_name, "repository_root": str(root),
             "path": str(worktree_path), "branch": branch, "base_revision": base.stdout.strip(),
             "source_worktree_dirty": bool(status.stdout.strip()),
             "status": "created", "test_command": None, "test_exit_code": None,
@@ -134,25 +160,58 @@ class WorkstreamManager:
         status = self._git(["status", "--porcelain"], root)
         if status.returncode != 0 or status.stdout.strip():
             raise ValueError("Target repository must have a clean working tree before merge")
+        parent_task_id = row.get("parent_task_id") or row.get("task_id")
+        from app.core.task_state import TaskPhase, task_manager
+        parent_task = task_manager.get_task(parent_task_id) if parent_task_id else None
+        if parent_task and parent_task.repository_root and Path(parent_task.repository_root).resolve() != root:
+            raise ValueError("Workstream repository does not match the linked task repository.")
+        if parent_task and parent_task.phase in {TaskPhase.COMPLETED, TaskPhase.CANCELLED, TaskPhase.FAILED}:
+            raise ValueError(f"Cannot merge into a task in phase {parent_task.phase.value}")
+        if not approval_manager.consume_approved(approval_id, "git_merge", target, parent_task_id):
+            raise ValueError("Merge approval is invalid, expired, bound to another task, or already consumed.")
+        if parent_task:
+            current_phase = task_manager.get_task(parent_task_id).phase
+            if current_phase == TaskPhase.PLANNING:
+                task_manager.transition_phase(parent_task_id, TaskPhase.EXECUTION)
+                current_phase = TaskPhase.EXECUTION
+            if current_phase in {TaskPhase.EXECUTION, TaskPhase.TESTING}:
+                task_manager.transition_phase(parent_task_id, TaskPhase.REVIEW)
+                current_phase = TaskPhase.REVIEW
+            if current_phase == TaskPhase.REVIEW:
+                task_manager.transition_phase(parent_task_id, TaskPhase.APPROVAL)
+                current_phase = TaskPhase.APPROVAL
+            if current_phase == TaskPhase.APPROVAL:
+                task_manager.transition_phase(parent_task_id, TaskPhase.MERGING)
+
+        def restore_review_phase() -> None:
+            current_task = task_manager.get_task(parent_task_id) if parent_task_id else None
+            if current_task and current_task.phase == TaskPhase.MERGING:
+                task_manager.transition_phase(parent_task_id, TaskPhase.REVIEW)
+
         merge = self._git(["merge", "--no-ff", "--no-commit", source_branch], root, timeout=60)
         if merge.returncode != 0:
             self._git(["merge", "--abort"], root)
+            restore_review_phase()
             audit.log_task_event(row["task_id"], "workstream_merge_conflict", detail=source_branch)
             return {"success": False, "error": "Merge failed or conflicted; merge was aborted.", "stderr": merge.stderr[:2000]}
         from app.tools.terminal import run_command
         tests = run_command(test_command, working_directory=str(root))
         if tests.get("exit_code") != 0:
             self._git(["merge", "--abort"], root)
+            restore_review_phase()
             audit.log_task_event(row["task_id"], "workstream_merge_tests_failed", detail=source_branch)
             return {"success": False, "error": "Target tests failed after merge; merge was aborted.", "test_result": tests}
         commit = self._git(["commit", "--no-edit"], root, timeout=60)
         if commit.returncode != 0:
             self._git(["merge", "--abort"], root)
+            restore_review_phase()
             return {"success": False, "error": "Merge commit failed; attempted to abort the in-progress merge.", "stderr": commit.stderr[:2000]}
         revision = self._git(["rev-parse", "HEAD"], root).stdout.strip()
+        restore_review_phase()
         audit.log_git_op("workstream_merge", row.get("repository", ""), detail=f"{source_branch}->{target_branch};verified_tests=true;revision={revision[:12]}")
         return {"success": True, "workstream_id": workstream_id, "source_branch": source_branch,
                 "target_branch": target_branch, "merge_commit": revision, "tests_passed": True,
+                "parent_task_id": parent_task_id, "task_phase": task_manager.get_task(parent_task_id).phase.value if task_manager.get_task(parent_task_id) else None,
                 "test_command": test_command, "stdout": tests.get("stdout", "")[-2000:]}
 
     def remove(self, workstream_id: str) -> dict[str, Any]:

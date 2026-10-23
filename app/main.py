@@ -1,4 +1,6 @@
 import sys
+import json
+import ipaddress
 from pathlib import Path
 
 # Ensure project root is in sys.path for direct script execution
@@ -184,6 +186,15 @@ mcp.tool()(agent.list_parallel_workstreams)
 mcp.tool()(agent.validate_parallel_workstream)
 mcp.tool()(agent.merge_parallel_workstream)
 mcp.tool()(agent.remove_parallel_workstream)
+mcp.tool()(agent.start_coding_workers)
+mcp.tool()(agent.get_coding_worker_job)
+mcp.tool()(agent.list_coding_worker_jobs)
+mcp.tool()(agent.cancel_coding_worker_job)
+mcp.tool()(agent.run_independent_verification)
+mcp.tool()(agent.transition_task_phase)
+mcp.tool()(agent.start_worker_benchmark)
+mcp.tool()(agent.get_worker_benchmark)
+mcp.tool()(agent.list_worker_benchmarks)
 
 
 # ════════════════════════════════════════════════════════════
@@ -205,7 +216,7 @@ async def health_check(request: Request) -> JSONResponse:
         "auth_enabled": bool(settings.MCP_AUTH_ENABLED),
         "host": settings.MCP_HOST,
         "port": settings.MCP_PORT,
-        "tool_count": 81,
+        "tool_count": 90,
     })
 
 
@@ -213,7 +224,7 @@ async def health_check(request: Request) -> JSONResponse:
 async def tool_list(request: Request) -> JSONResponse:
     """Returns a categorized list of all registered MCP tools."""
     return JSONResponse({
-        "total_tools": 81,
+        "total_tools": 90,
         "categories": {
             "workspace_management": ["list_repositories", "select_repository", "get_current_repository", "add_repository", "clone_github_repository", "remove_repository"],
             "filesystem_read": ["list_files", "read_file"],
@@ -235,6 +246,9 @@ async def tool_list(request: Request) -> JSONResponse:
             "git_recovery": ["rollback_git_reset_checkpoint"],
             "approvals": ["request_approval", "resolve_approval", "list_approvals"],
             "parallel_workstreams": ["create_parallel_workstream", "list_parallel_workstreams", "validate_parallel_workstream", "merge_parallel_workstream", "remove_parallel_workstream"],
+            "worker_runtime": ["start_coding_workers", "get_coding_worker_job", "list_coding_worker_jobs", "cancel_coding_worker_job"],
+            "independent_verification": ["run_independent_verification", "transition_task_phase"],
+            "benchmark_harness": ["start_worker_benchmark", "get_worker_benchmark", "list_worker_benchmarks"],
         }
     })
 
@@ -340,6 +354,59 @@ async def events_api(request: Request) -> JSONResponse:
     return JSONResponse({"events": audit.recent_events(request.query_params.get("task_id"), bounded_limit)})
 
 
+@mcp.custom_route("/api/workers", methods=["GET"])
+async def worker_jobs_api(request: Request) -> JSONResponse:
+    return JSONResponse(agent.list_coding_worker_jobs(request.query_params.get("task_id")))
+
+
+@mcp.custom_route("/api/worker", methods=["GET"])
+async def worker_job_detail_api(request: Request) -> JSONResponse:
+    job_id = request.query_params.get("id", "")
+    if not job_id:
+        return JSONResponse({"error": "Provide ?id=<job_id>."}, status_code=400)
+    result = agent.get_coding_worker_job(job_id)
+    return JSONResponse(result, status_code=404 if "error" in result else 200)
+
+
+@mcp.custom_route("/api/worker/cancel", methods=["POST"])
+async def worker_cancel_api(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Expected a JSON body."}, status_code=400)
+    result = agent.cancel_coding_worker_job(str(payload.get("job_id", "")))
+    return JSONResponse(result, status_code=400 if "error" in result else 200)
+
+
+@mcp.custom_route("/api/worker-benchmarks", methods=["GET"])
+async def worker_benchmarks_api(request: Request) -> JSONResponse:
+    run_id = request.query_params.get("id")
+    if run_id:
+        result = agent.get_worker_benchmark(run_id)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", "50")), 200))
+    except ValueError:
+        return JSONResponse({"error": "limit must be an integer between 1 and 200."}, status_code=400)
+    return JSONResponse(agent.list_worker_benchmarks(limit))
+
+
+@mcp.custom_route("/api/worker-benchmarks/start", methods=["POST"])
+async def worker_benchmark_start_api(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Expected a JSON body."}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "JSON body must be an object."}, status_code=400)
+    try:
+        timeout_seconds = int(payload.get("timeout_seconds", 1800))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "timeout_seconds must be an integer."}, status_code=400)
+    result = agent.start_worker_benchmark(json.dumps(payload.get("cases", [])), payload.get("workers"), timeout_seconds)
+    return JSONResponse(result, status_code=400 if "error" in result else 202)
+
+
 @mcp.custom_route("/dashboard", methods=["GET"])
 async def task_dashboard(request: Request) -> HTMLResponse:
     """Lightweight live task/approval dashboard served by the MCP server itself."""
@@ -348,7 +415,7 @@ async def task_dashboard(request: Request) -> HTMLResponse:
 <title>MCP Coding Tool Dashboard</title><style>
 body{font:14px system-ui;margin:0;background:#10151d;color:#e8edf5}header{padding:18px 24px;background:#192331;position:sticky;top:0}h1{font-size:20px;margin:0}main{padding:20px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}.panel{background:#192331;border:1px solid #2c3a4d;border-radius:10px;padding:16px;min-width:0}h2{font-size:16px;margin:0 0 12px}button{border:1px solid #53647a;background:#26364a;color:#fff;padding:6px 10px;border-radius:6px;cursor:pointer;margin:2px}button:hover{background:#344a64}.item{border-top:1px solid #344052;padding:10px 0;overflow-wrap:anywhere}.muted{color:#a9b8ca}.pill{border-radius:20px;background:#26364a;padding:2px 8px}.log{white-space:pre-wrap;max-height:320px;overflow:auto;font:12px ui-monospace,monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#8fc7ff}</style>
 <header><h1>MCP Coding Tool <span class="muted">· live dashboard</span></h1><div class="muted">Tasks, approval requests, test state and audit events · refreshes every 4 seconds</div></header>
-<main><section class="panel"><h2>Tasks</h2><div id="tasks">Loading…</div></section><section class="panel"><h2>Pending approvals</h2><div id="approvals">Loading…</div></section><section class="panel"><h2>Live audit log</h2><div class="muted">Latest redacted events</div><div id="events" class="log"></div></section><section class="panel"><h2>Diff review</h2><button onclick="loadDiff(false)">Working tree diff</button><button onclick="loadDiff(true)">Staged diff</button><div id="diff" class="log"></div></section><section class="panel"><h2>Recovery checkpoints</h2><div class="muted">Only checkpoints for the active repository are shown. Recovery restores the selected snapshot.</div><div id="checkpoints"></div></section><section class="panel"><h2>Selected task details</h2><div id="detail" class="muted">Select a task to inspect plan, tests, and changed files.</div></section></main>
+<main><section class="panel"><h2>Tasks</h2><div id="tasks">Loading…</div></section><section class="panel"><h2>Pending approvals</h2><div id="approvals">Loading…</div></section><section class="panel"><h2>Live audit log</h2><div class="muted">Latest redacted events</div><div id="events" class="log"></div></section><section class="panel"><h2>Diff review</h2><button onclick="loadDiff(false)">Working tree diff</button><button onclick="loadDiff(true)">Staged diff</button><div id="diff" class="log"></div></section><section class="panel"><h2>Recovery checkpoints</h2><div class="muted">Only checkpoints for the active repository are shown. Recovery restores the selected snapshot.</div><div id="checkpoints"></div></section><section class="panel"><h2>Worker jobs</h2><div class="muted">Independent CLI workers in isolated worktrees</div><div id="workers"></div></section><section class="panel"><h2>Benchmark runs</h2><div id="benchmarks"></div></section><section class="panel"><h2>Selected task details</h2><div id="detail" class="muted">Select a task to inspect plan, tests, and changed files.</div></section></main>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function json(url,opts){const r=await fetch(url,opts);return await r.json()}
@@ -357,7 +424,11 @@ async function decide(id,decision){const r=await json('/api/approvals/resolve',{
 async function loadDiff(staged){const d=await json('/api/diff?staged='+String(staged));document.getElementById('diff').textContent=d.diff||d.error||'No diff';}
 async function rollbackCheckpoint(taskId,checkpointId,path){if(!confirm('Restore '+path+' from checkpoint '+checkpointId+'? This overwrites the current file state.'))return;const r=await json('/api/rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:taskId,checkpoint_id:checkpointId})});if(r.error)alert(r.error);else alert('Restored '+(r.restored_path||path));await refresh()}
 async function refresh(){try{const t=await json('/api/tasks');document.getElementById('tasks').innerHTML=(t.tasks||[]).map(x=>`<div class="item"><button onclick="selectTask('${esc(x.id)}')">Inspect</button> <b>${esc(x.objective)}</b><br><span class="muted">${esc(x.repository)} · ${esc(x.branch)} · ${esc(x.plan_progress)} steps · repairs ${esc(x.repair_attempts)}</span><br><span class="pill">${esc(x.status)}</span> ${x.final_verified?'✓ verified':'not verified'}</div>`).join('')||'<span class="muted">No tasks recorded.</span>';const a=await json('/api/approvals?status=pending');document.getElementById('approvals').innerHTML=(a.approvals||[]).map(x=>`<div class="item"><b>${esc(x.operation)}</b> → ${esc(x.target)}<br><span class="muted">Expires ${esc(x.expires_at)}</span><p>${esc(x.details)}</p><button onclick="decide('${esc(x.id)}','approved')">Approve</button><button onclick="decide('${esc(x.id)}','denied')">Deny</button></div>`).join('')||'<span class="muted">No pending approvals.</span>';const e=await json('/api/events?limit=80');document.getElementById('events').textContent=(e.events||[]).map(x=>`${x.ts||''} ${x.event||''} ${x.sub_event||x.operation||x.tool||''} ${x.task_id||''} ${x.detail||x.error||''}`).join('\n')||'No events yet.';const c=await json('/api/checkpoints');document.getElementById('checkpoints').innerHTML=(c.checkpoints||[]).map(x=>`<div class="item"><b>${esc(x.path)}</b><br><span class="muted">${esc(x.created_at)} · ${esc(x.kind)}</span><br><button onclick="rollbackCheckpoint('${esc(x.task_id)}','${esc(x.checkpoint_id)}','${esc(x.path)}')">Recover snapshot</button></div>`).join('')||'<span class="muted">No recoverable checkpoints for this workspace.</span>';}catch(err){document.getElementById('events').textContent='Dashboard API error: '+err}}
-refresh();setInterval(refresh,4000);
+async function refreshWorkers(){try{const w=await json('/api/workers');document.getElementById('workers').innerHTML=(w.jobs||[]).slice(0,20).map(function(j){return '<div class="item"><b>'+esc(j.job_id)+'</b> <span class="pill">'+esc(j.status)+'</span><br><span class="muted">'+esc((j.workers||[]).join(', '))+'</span>'+(j.status==='running'?'<br><button onclick="cancelWorker(\''+esc(j.job_id)+'\')">Cancel</button>':'')+'<br><button onclick="showWorker(\''+esc(j.job_id)+'\')">Details</button></div>'}).join('')||'<span class="muted">No worker jobs yet.</span>';const b=await json('/api/worker-benchmarks?limit=10');document.getElementById('benchmarks').innerHTML=(b.runs||[]).map(function(x){return '<div class="item"><b>'+esc(x.run_id)+'</b> <span class="pill">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.baseline_revision||'')+'</span><br><button onclick="showBenchmark(\''+esc(x.run_id)+'\')">Results</button></div>'}).join('')||'<span class="muted">No benchmark runs yet.</span>'}catch(err){document.getElementById('workers').textContent='Worker API unavailable: '+err}}
+async function cancelWorker(id){const r=await json('/api/worker/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:id})});if(r.error)alert(r.error);await refreshWorkers()}
+async function showWorker(id){const d=await json('/api/worker?id='+encodeURIComponent(id));document.getElementById('detail').innerHTML='<pre>'+esc(JSON.stringify(d,null,2))+'</pre>'}
+async function showBenchmark(id){const d=await json('/api/worker-benchmarks?id='+encodeURIComponent(id));document.getElementById('detail').innerHTML='<pre>'+esc(JSON.stringify(d,null,2))+'</pre>'}
+refresh();refreshWorkers();setInterval(function(){refresh();refreshWorkers()},4000);
 </script></html>''')
 
 
@@ -375,6 +446,17 @@ def create_app() -> Starlette:
     if deployment_mode not in {"local", "cloud"}:
         raise RuntimeError("MCP_DEPLOYMENT_MODE must be either 'local' or 'cloud'.")
     cloud_mode = deployment_mode == "cloud"
+    if not settings.MCP_DASHBOARD_ENABLED:
+        logger.info("Developer dashboard and /api/* dashboard endpoints are disabled by configuration.")
+    try:
+        host_ip = ipaddress.ip_address(settings.MCP_HOST.strip("[]"))
+        non_loopback = not host_ip.is_loopback
+    except ValueError:
+        non_loopback = settings.MCP_HOST.lower() not in {"localhost"}
+    if non_loopback and not settings.MCP_AUTH_ENABLED:
+        raise RuntimeError("Refusing to bind an unauthenticated MCP server to a non-loopback host. Enable MCP_AUTH_ENABLED and set a strong MCP_AUTH_TOKEN.")
+    if non_loopback and len(settings.MCP_AUTH_TOKEN.strip()) < 32:
+        raise RuntimeError("Non-loopback MCP hosts require MCP_AUTH_TOKEN with at least 32 characters.")
     if cloud_mode:
         token = settings.MCP_AUTH_TOKEN.strip()
         if len(token) < 32:
@@ -428,8 +510,8 @@ def create_app() -> Starlette:
         if path and path not in [getattr(cr, "path", None) for cr in http_app.routes]:
             http_app.routes.append(route)
 
-    if settings.MCP_AUTH_ENABLED:
-        http_app.add_middleware(BearerAuthMiddleware)
+    # Middleware also enforces dashboard disablement in local mode; auth itself remains config-gated.
+    http_app.add_middleware(BearerAuthMiddleware)
 
     return http_app
 
@@ -438,6 +520,13 @@ def start_server(host: str = None, port: int = None):
     """Starts the standalone MCP ASGI server with Uvicorn."""
     srv_host = host or settings.MCP_HOST
     srv_port = port or settings.MCP_PORT
+    try:
+        host_ip = ipaddress.ip_address(srv_host.strip("[]"))
+        non_loopback = not host_ip.is_loopback
+    except ValueError:
+        non_loopback = srv_host.lower() not in {"localhost"}
+    if non_loopback and (not settings.MCP_AUTH_ENABLED or len(settings.MCP_AUTH_TOKEN.strip()) < 32):
+        raise RuntimeError("Non-loopback server binds require MCP_AUTH_ENABLED=true and MCP_AUTH_TOKEN with at least 32 characters.")
 
     logger.info("=" * 70)
     logger.info("Multi-Repository Autonomous Coding Agent MCP Server v2.0")

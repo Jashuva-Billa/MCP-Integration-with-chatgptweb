@@ -29,6 +29,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     Exempts public endpoints such as /health.
     """
     async def dispatch(self, request: Request, call_next) -> Response:
+        if not settings.MCP_DASHBOARD_ENABLED and (request.url.path == "/dashboard" or request.url.path.startswith("/api/")):
+            return JSONResponse(status_code=404, content={"error": "Dashboard endpoints are disabled."})
+
         # Check if auth is disabled globally
         if not settings.MCP_AUTH_ENABLED:
             return await call_next(request)

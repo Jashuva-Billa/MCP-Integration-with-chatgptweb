@@ -31,7 +31,8 @@ class ApprovalManager:
         temp.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
         temp.replace(self.path)
 
-    def request(self, operation: str, target: str, details: str = "", ttl_minutes: int = 60) -> dict[str, Any]:
+    def request(self, operation: str, target: str, details: str = "", ttl_minutes: int = 60,
+                task_id: str | None = None) -> dict[str, Any]:
         operation, target = operation.strip(), target.strip()
         if not operation or not target:
             raise ValueError("operation and target are required")
@@ -40,7 +41,8 @@ class ApprovalManager:
         now = datetime.now(timezone.utc)
         row = {
             "id": uuid.uuid4().hex[:12], "operation": operation[:100], "target": target[:500],
-            "details": details[:2000], "status": "pending", "created_at": now.isoformat(),
+            "details": details[:2000], "task_id": task_id[:100] if task_id else None,
+            "status": "pending", "created_at": now.isoformat(),
             "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(),
             "resolved_at": None, "resolved_by": None,
         }
@@ -84,6 +86,27 @@ class ApprovalManager:
             self._write(rows)
         audit.log_tool("resolve_approval", {"approval_id": approval_id, "decision": decision, "resolved_by": resolved_by})
         return row
+
+    def consume_approved(self, approval_id: str | None, operation: str, target: str,
+                         task_id: str | None = None) -> bool:
+        """Atomically consume a matching approval so it cannot be replayed."""
+        if not approval_id:
+            return False
+        with self._lock:
+            rows = self._read()
+            row = next((item for item in rows if item.get("id") == approval_id), None)
+            if (not row or row.get("status") != "approved" or row.get("operation") != operation
+                    or row.get("target") != target or (task_id and row.get("task_id") and row.get("task_id") != task_id)):
+                return False
+            if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+                row["status"] = "expired"
+                self._write(rows)
+                return False
+            row["status"] = "consumed"
+            row["consumed_at"] = datetime.now(timezone.utc).isoformat()
+            self._write(rows)
+        audit.log_tool("consume_approval", {"approval_id": approval_id, "operation": operation, "target": target})
+        return True
 
     def is_approved(self, approval_id: str | None, operation: str, target: str) -> bool:
         if not approval_id:

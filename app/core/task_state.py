@@ -22,10 +22,11 @@ Temporary task state is separated from persistent project knowledge.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -35,6 +36,29 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
+
+class TaskPhase(str, Enum):
+    PLANNING = "planning"
+    EXECUTION = "execution"
+    TESTING = "testing"
+    REVIEW = "review"
+    APPROVAL = "approval"
+    MERGING = "merging"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+PHASE_TRANSITIONS = {
+    TaskPhase.PLANNING: {TaskPhase.EXECUTION, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.EXECUTION: {TaskPhase.TESTING, TaskPhase.REVIEW, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.TESTING: {TaskPhase.EXECUTION, TaskPhase.REVIEW, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.REVIEW: {TaskPhase.EXECUTION, TaskPhase.TESTING, TaskPhase.APPROVAL, TaskPhase.COMPLETED, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.APPROVAL: {TaskPhase.REVIEW, TaskPhase.MERGING, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.MERGING: {TaskPhase.REVIEW, TaskPhase.COMPLETED, TaskPhase.FAILED, TaskPhase.CANCELLED},
+    TaskPhase.COMPLETED: set(), TaskPhase.FAILED: {TaskPhase.EXECUTION}, TaskPhase.CANCELLED: {TaskPhase.EXECUTION},
+}
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -97,6 +121,9 @@ class TaskState:
     updated_at: str
     error: Optional[str] = None
     max_repair_attempts: int = 5
+    phase: TaskPhase = TaskPhase.PLANNING
+    verification_evidence_id: Optional[str] = None
+    repository_root: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +158,10 @@ class TaskManager:
         import subprocess
 
         repo_name = session_manager.get_active_repo_name() or "unknown"
+        repo_root = ""
         try:
             root = session_manager.get_active_repo_path()
+            repo_root = str(Path(root).resolve())
             branch_out = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 cwd=str(root), capture_output=True, text=True, timeout=5
@@ -170,6 +199,7 @@ class TaskManager:
             created_at=now,
             updated_at=now,
             max_repair_attempts=max_repair_attempts,
+            repository_root=repo_root,
         )
 
         with self._lock:
@@ -178,6 +208,8 @@ class TaskManager:
         return task
 
     def get_task(self, task_id: str) -> Optional[TaskState]:
+        if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
+            return None
         with self._lock:
             if task_id in self._active_tasks:
                 return self._active_tasks[task_id]
@@ -208,6 +240,23 @@ class TaskManager:
             except Exception:
                 pass
         return tasks
+
+    def transition_phase(self, task_id: str, phase: TaskPhase, evidence_id: Optional[str] = None) -> bool:
+        task = self.get_task(task_id)
+        if not task:
+            return False
+        current = task.phase
+        if phase != current and phase not in PHASE_TRANSITIONS[current]:
+            raise ValueError(f"Invalid task phase transition: {current.value} -> {phase.value}")
+        if phase == TaskPhase.COMPLETED and current != TaskPhase.COMPLETED:
+            if not task.final_verified or not evidence_id or evidence_id != task.verification_evidence_id:
+                raise ValueError("Completion requires final_verified=true and matching independent verification evidence.")
+        task.phase = phase
+        if evidence_id is not None:
+            task.verification_evidence_id = evidence_id
+        task.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist(task)
+        return True
 
     def update_status(self, task_id: str, status: TaskStatus) -> bool:
         task = self.get_task(task_id)
@@ -328,6 +377,13 @@ class TaskManager:
         plan = [TaskStep(**s) for s in data.get("plan", [])]
         test_runs = [TestRun(**t) for t in data.get("test_runs", [])]
         checkpoints = [Checkpoint(**c) for c in data.get("checkpoints", [])]
+        phase_value = data.get("phase")
+        if not phase_value:
+            legacy_status = data.get("status", "pending")
+            phase_value = ("completed" if legacy_status == "completed" and data.get("final_verified") else
+                           "failed" if legacy_status == "failed" else
+                           "cancelled" if legacy_status == "cancelled" else
+                           "execution" if legacy_status in {"running", "repairing"} else "planning")
         return TaskState(
             id=data["id"],
             objective=data["objective"],
@@ -349,6 +405,9 @@ class TaskManager:
             updated_at=data.get("updated_at", ""),
             error=data.get("error"),
             max_repair_attempts=data.get("max_repair_attempts", 5),
+            phase=TaskPhase(phase_value),
+            verification_evidence_id=data.get("verification_evidence_id"),
+            repository_root=data.get("repository_root", ""),
         )
 
     def _serialize(self, task: TaskState) -> Dict[str, Any]:
@@ -373,6 +432,9 @@ class TaskManager:
             "updated_at": task.updated_at,
             "error": task.error,
             "max_repair_attempts": task.max_repair_attempts,
+            "phase": task.phase.value,
+            "verification_evidence_id": task.verification_evidence_id,
+            "repository_root": task.repository_root,
         }
 
     def _summary(self, task: TaskState) -> Dict[str, Any]:
@@ -382,6 +444,9 @@ class TaskManager:
             "id": task.id,
             "objective": task.objective[:100],
             "status": task.status.value,
+            "phase": task.phase.value,
+            "verification_evidence_id": task.verification_evidence_id,
+            "repository_root": task.repository_root,
             "repository": task.repository,
             "branch": task.branch,
             "profile": task.profile,

@@ -79,7 +79,11 @@ def test_hooks_tools():
     assert res["event"] == "after_task_complete"
 
 
-def test_task_state_lifecycle():
+def test_task_state_lifecycle(monkeypatch):
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id: {
+        "passed": True, "evidence_id": "unit-evidence", "checks": [], "revision_stable": True
+    })
     # 1. Create task
     task = agent.create_task(
         objective="Refactor auth middleware to support bearer tokens",
@@ -187,6 +191,10 @@ def test_chatgpt_web_finish_requires_completed_plan_and_passing_tests(monkeypatc
 
     monkeypatch.setattr(terminal, "run_command", lambda command: {
         "exit_code": 0, "stdout": "3 passed", "stderr": "", "duration_seconds": 0.1
+    })
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id: {
+        "passed": True, "evidence_id": "finish-evidence", "checks": [], "revision_stable": True
     })
     result = agent.finish_chatgpt_coding_task(task_id, "Fixed and tested", "pytest -q")
     assert result["success"] is True

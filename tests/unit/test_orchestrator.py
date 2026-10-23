@@ -63,6 +63,10 @@ def test_checkpoint_refuses_cross_repository_rollback(tmp_path):
 
 
 def test_orchestrator_runs_actions_and_finishes(test_environment, tmp_path, monkeypatch):
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id: {
+        "passed": True, "evidence_id": "orchestrator-evidence", "checks": [], "revision_stable": True
+    })
     repo = test_environment["repo_a"]
     session_manager.set_active_repo_name("Repo_A")
     (repo / "src" / "hello.py").write_text("print('old')\n", encoding="utf-8")
@@ -149,6 +153,10 @@ def test_aborting_validation_hook_rolls_back_mutation(test_environment, monkeypa
 
 
 def test_orchestrator_resumes_persisted_session(test_environment, monkeypatch):
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id: {
+        "passed": True, "evidence_id": "resume-evidence", "checks": [], "revision_stable": True
+    })
     session_manager.set_active_repo_name("Repo_A")
     monkeypatch.setattr(orchestration_module, "_tool_actions", lambda: {
         "read_file": lambda path: {"content": "existing source"},
@@ -251,6 +259,10 @@ def test_parallel_review_workers_run_concurrently():
 
 
 def test_high_severity_worker_proposal_is_checkpointed_and_revalidated(test_environment, monkeypatch):
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id: {
+        "passed": True, "evidence_id": "worker-review-evidence", "checks": [], "revision_stable": True
+    })
     import threading
     from app.core.orchestrator import AutonomousOrchestrator
     from app.tools import terminal

@@ -29,6 +29,22 @@ class Settings(BaseSettings):
     MCP_GIT_PUSH_ENABLED: bool = False
     MCP_GIT_PUSH_REQUIRE_APPROVAL: bool = True
 
+    # Real coding-worker subprocesses. JSON object: {"codex":["codex","exec","--full-auto","{prompt}"]}
+    MCP_WORKER_COMMANDS: str = ""
+    MCP_WORKER_MAX_CONCURRENCY: int = 3
+    MCP_WORKER_TIMEOUT_SECONDS: int = 1800
+    MCP_WORKER_SANDBOX_MODE: str = "docker"  # docker | host
+    MCP_WORKER_SANDBOX_IMAGE: str = "mcp-coding-worker:latest"
+    MCP_WORKER_NETWORK_MODE: str = "none"  # none | bridge; bridge explicitly permits outbound network
+    MCP_WORKER_CREDENTIAL_MOUNTS: str = ""  # JSON array of {"source": "...", "target": "/home/worker/.config/..."} read-only mounts
+    MCP_WORKER_HOST_MODE_ALLOWED: bool = False
+    MCP_WORKER_SYNTHESIS_ENABLED: bool = False  # Optional model-based synthesis; structured synthesis works without API calls.
+    # Independent checks run in fresh subprocesses; commands are argv arrays, never shell strings.
+    MCP_VERIFICATION_COMMANDS: str = ""
+    MCP_VERIFICATION_TIMEOUT_SECONDS: int = 600
+    # Dashboard is protected by BearerAuthMiddleware whenever MCP_AUTH_ENABLED=true.
+    MCP_DASHBOARD_ENABLED: bool = True
+
     # Optional OpenAI-compatible model provider for autonomous orchestration
     MCP_LLM_API_KEY: str = ""
     MCP_LLM_BASE_URL: str = "https://api.openai.com/v1"

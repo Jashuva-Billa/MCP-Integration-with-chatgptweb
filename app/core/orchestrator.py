@@ -25,7 +25,7 @@ from app.core.execution_profile import execution_profile
 from app.core.hooks import hooks_engine
 from app.core.permissions import policy_engine
 from app.core.session import session_manager
-from app.core.task_state import TaskStatus, task_manager
+from app.core.task_state import TaskPhase, TaskStatus, task_manager
 
 
 class ProviderError(RuntimeError):
@@ -267,8 +267,14 @@ class AutonomousOrchestrator:
             plan_steps = plan_steps or [step.description for step in task.plan]
         if task is None:
             task = task_manager.create_task(objective, requirements or [], plan_steps or [], repair_limit)
-        task_manager.update_status(task.id, TaskStatus.RUNNING)
         root = _repo_root()
+        if task.repository_root and Path(task.repository_root).resolve() != root.resolve():
+            return {"task_id": task.id, "status": task.status.value,
+                    "error": "Active repository differs from the task's recorded repository; re-select the original repository before resuming."}
+        task_manager.update_status(task.id, TaskStatus.RUNNING)
+        current_phase = task_manager.get_task(task.id).phase
+        if current_phase == TaskPhase.PLANNING:
+            task_manager.transition_phase(task.id, TaskPhase.EXECUTION)
         actions = _tool_actions()
         trace: list[dict[str, Any]] = []
         metrics = {"steps": 0, "tool_failures": 0, "repair_attempts": 0, "latency_seconds": 0.0,
@@ -342,10 +348,37 @@ class AutonomousOrchestrator:
                     summary = str(content.get("summary", ""))[:1800]
                     if bool(content.get("acceptance_met")) and not accepted:
                         summary += " Verification gate: a successful run_tests action after the last edit is required."
+                    independent = None
+                    if accepted:
+                        try:
+                            from app.core.verification import verify_repository
+                            independent = verify_repository(root, task.id)
+                            accepted = bool(independent.get("passed"))
+                            if not accepted:
+                                summary += " Independent test/lint verification failed; task is not complete."
+                        except Exception as exc:
+                            independent = {"passed": False, "error": str(exc)}
+                            accepted = False
+                            summary += " Independent verification could not run; task is not complete."
                     task_manager.set_verified(task.id, accepted)
+                    if accepted:
+                        current = task_manager.get_task(task.id)
+                        if current and current.phase == TaskPhase.EXECUTION:
+                            task_manager.transition_phase(task.id, TaskPhase.TESTING)
+                            task_manager.transition_phase(task.id, TaskPhase.REVIEW, independent["evidence_id"])
+                        elif current and current.phase == TaskPhase.TESTING:
+                            task_manager.transition_phase(task.id, TaskPhase.REVIEW, independent["evidence_id"])
+                        elif current and current.phase == TaskPhase.REVIEW:
+                            task_manager.transition_phase(task.id, TaskPhase.REVIEW, independent["evidence_id"])
+                        task_manager.transition_phase(task.id, TaskPhase.COMPLETED, independent["evidence_id"])
+                    else:
+                        current = task_manager.get_task(task.id)
+                        if current and current.phase not in {TaskPhase.FAILED, TaskPhase.CANCELLED, TaskPhase.COMPLETED}:
+                            task_manager.transition_phase(task.id, TaskPhase.FAILED)
                     task_manager.update_status(task.id, TaskStatus.COMPLETED if accepted else TaskStatus.FAILED)
                     entry.update({"acceptance_met": accepted, "summary": summary,
-                                  "successful_test_after_last_edit": last_passed_test_step > last_edit_step})
+                                  "successful_test_after_last_edit": last_passed_test_step > last_edit_step,
+                                  "independent_verification": independent})
                     trace.append(entry)
                     persist_session()
                     break
@@ -355,6 +388,9 @@ class AutonomousOrchestrator:
                     metrics["tool_failures"] += 1
                 else:
                     if action == "write_file":
+                        current_task = task_manager.get_task(task.id)
+                        if current_task and current_task.phase in {TaskPhase.TESTING, TaskPhase.REVIEW}:
+                            task_manager.transition_phase(task.id, TaskPhase.EXECUTION)
                         if not profile.get("self_healing", True):
                             last_result = {"error": "File writes are disabled by execution profile."}
                             metrics["tool_failures"] += 1
@@ -391,6 +427,9 @@ class AutonomousOrchestrator:
                                     command=command, exit_code=exit_code, duration_seconds=duration,
                                     passed=exit_code == 0, stdout=str(last_result.get("stdout", ""))[:3000],
                                     stderr=str(last_result.get("stderr", ""))[:3000]))
+                                current_task = task_manager.get_task(task.id)
+                                if current_task and current_task.phase == TaskPhase.EXECUTION:
+                                    task_manager.transition_phase(task.id, TaskPhase.TESTING)
                                 if exit_code:
                                     metrics["repair_attempts"] += 1
                                     task_manager.increment_repair(task.id)

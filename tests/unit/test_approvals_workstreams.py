@@ -16,6 +16,9 @@ def test_approval_lifecycle_is_targeted_and_expires(tmp_path):
     manager.resolve(request["id"], "approved", "test-user")
     assert manager.is_approved(request["id"], "git_push", "origin/main") is True
     assert manager.is_approved(request["id"], "git_push", "origin/dev") is False
+    assert manager.consume_approved(request["id"], "git_push", "origin/main") is True
+    assert manager.consume_approved(request["id"], "git_push", "origin/main") is False
+    assert manager.list(status="consumed")[0]["id"] == request["id"]
 
 
 def test_approval_cannot_be_resolved_twice(tmp_path):

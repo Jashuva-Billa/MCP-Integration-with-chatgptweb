@@ -4,6 +4,7 @@ Agent tools: permissions, profiles, skills, hooks, persistent tasks, and autonom
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.audit import audit
@@ -12,7 +13,19 @@ from app.core.execution_profile import execution_profile
 from app.core.hooks import hooks_engine
 from app.core.permissions import PermissionProfile, policy_engine
 from app.core.skills import skills_engine
-from app.core.task_state import TaskStatus, TestRun, task_manager
+from app.core.task_state import TaskPhase, TaskStatus, TestRun, task_manager
+
+
+def _verification_root(task_id: str = "") -> Path:
+    from app.core.session import session_manager
+    active_root = Path(session_manager.get_active_repo_path()).resolve(strict=True)
+    task = task_manager.get_task(task_id) if task_id else None
+    if task and task.repository_root:
+        recorded_root = Path(task.repository_root).resolve(strict=True)
+        if active_root != recorded_root:
+            raise ValueError("Active repository differs from the task's recorded repository. Re-select the original repository before continuing.")
+        return recorded_root
+    return active_root
 
 
 def get_permission_profile() -> Dict[str, Any]:
@@ -127,7 +140,10 @@ def get_task(task_id: str) -> Dict[str, Any]:
         return {"error": f"Task '{task_id}' not found."}
     return {
         "id": task.id, "objective": task.objective, "requirements": task.requirements,
-        "status": task.status.value, "repository": task.repository, "branch": task.branch, "profile": task.profile,
+        "status": task.status.value, "phase": task.phase.value,
+        "verification_evidence_id": task.verification_evidence_id,
+        "repository": task.repository, "repository_root": task.repository_root,
+        "branch": task.branch, "profile": task.profile,
         "plan": [{"index": s.index, "description": s.description, "status": s.status, "result": s.result} for s in task.plan],
         "files_inspected": task.files_inspected, "files_modified": task.files_modified,
         "commands_executed": task.commands_executed[-10:],
@@ -144,25 +160,41 @@ def list_tasks(status_filter: Optional[str] = None) -> Dict[str, Any]:
     return {"total": len(tasks), "tasks": tasks}
 
 
-def request_approval(operation: str, target: str, details: str = "", ttl_minutes: int = 60) -> Dict[str, Any]:
-    """Create a time-limited approval request for a specific privileged action and target."""
+def request_approval(operation: str, target: str, details: str = "", ttl_minutes: int = 60,
+                    task_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a time-limited approval request for a specific privileged action, target, and optional task."""
     try:
-        return {"success": True, "approval": approval_manager.request(operation, target, details, ttl_minutes)}
+        if task_id:
+            linked_task = task_manager.get_task(task_id)
+            if not linked_task:
+                return {"error": f"Task '{task_id}' not found."}
+            if linked_task.phase != TaskPhase.REVIEW:
+                return {"error": "Linked task must be in review phase before requesting privileged approval."}
+        return {"success": True, "approval": approval_manager.request(operation, target, details, ttl_minutes, task_id)}
     except ValueError as exc:
         return {"error": str(exc)}
 
 
 def resolve_approval(approval_id: str, decision: str, resolved_by: str = "user") -> Dict[str, Any]:
-    """Approve or deny a pending action; decisions are persisted and audit logged."""
+    """Approve or deny a pending action; decisions are persisted, audited, and linked to task phase."""
     try:
-        return {"success": True, "approval": approval_manager.resolve(approval_id, decision, resolved_by)}
-    except ValueError as exc:
+        approval = approval_manager.resolve(approval_id, decision, resolved_by)
+        task_id = approval.get("task_id")
+        task = task_manager.get_task(task_id) if task_id else None
+        if task:
+            if decision == "approved" and task.phase == TaskPhase.REVIEW:
+                task_manager.transition_phase(task_id, TaskPhase.APPROVAL)
+            elif decision == "denied" and task.phase == TaskPhase.APPROVAL:
+                task_manager.transition_phase(task_id, TaskPhase.REVIEW)
+        return {"success": True, "approval": approval,
+                "task_phase": task_manager.get_task(task_id).phase.value if task_id and task_manager.get_task(task_id) else None}
+    except (ValueError, RuntimeError) as exc:
         return {"error": str(exc)}
 
 
 def list_approvals(status_filter: Optional[str] = None) -> Dict[str, Any]:
-    if status_filter and status_filter not in {"pending", "approved", "denied", "expired"}:
-        return {"error": "status_filter must be pending, approved, denied, or expired."}
+    if status_filter and status_filter not in {"pending", "approved", "denied", "expired", "consumed"}:
+        return {"error": "status_filter must be pending, approved, denied, expired, or consumed."}
     rows = approval_manager.list(status_filter)
     return {"total": len(rows), "approvals": rows}
 
@@ -222,6 +254,11 @@ def complete_task(task_id: str, verified: bool = True, summary: Optional[str] = 
     task = task_manager.get_task(task_id)
     if not task:
         return {"error": f"Task '{task_id}' not found."}
+    if task.phase == TaskPhase.COMPLETED:
+        return {"success": bool(task.final_verified), "task_id": task_id, "verified": task.final_verified,
+                "phase": task.phase.value, "verification_evidence_id": task.verification_evidence_id,
+                "message": "Task is already completed; create a new task for additional changes."}
+    evidence = None
     if verified:
         incomplete = [step.index for step in task.plan if step.status != "done"]
         passing_test = any(run.passed for run in task.test_runs)
@@ -229,18 +266,52 @@ def complete_task(task_id: str, verified: bool = True, summary: Optional[str] = 
             return {
                 "success": False, "task_id": task_id, "verified": False,
                 "incomplete_steps": incomplete, "passing_test_recorded": passing_test,
-                "error": "Cannot mark verified: every plan step must be done and at least one passing test run must be recorded.",
+                "error": "Cannot mark verified: every plan step and a passing recorded test are required before independent verification.",
             }
+        try:
+            from app.core.verification import verify_repository
+            policy_engine.require_cmd_execute()
+            evidence = verify_repository(_verification_root(task_id), task_id)
+        except Exception as exc:
+            return {"success": False, "task_id": task_id, "verified": False,
+                    "error": f"Independent verification could not run: {exc}"}
+        if not evidence.get("passed"):
+            task_manager.set_verified(task_id, False)
+            task_manager.update_status(task_id, TaskStatus.REPAIRING)
+            return {"success": False, "task_id": task_id, "verified": False,
+                    "verification_evidence": evidence,
+                    "error": "Independent tests/linters did not pass; task remains incomplete."}
+        current = task_manager.get_task(task_id)
+        if current and current.phase == TaskPhase.PLANNING:
+            task_manager.transition_phase(task_id, TaskPhase.EXECUTION)
+            task_manager.transition_phase(task_id, TaskPhase.TESTING)
+            task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+        elif current and current.phase == TaskPhase.EXECUTION:
+            task_manager.transition_phase(task_id, TaskPhase.TESTING)
+            task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+        elif current and current.phase == TaskPhase.TESTING:
+            task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+        elif current and current.phase == TaskPhase.REVIEW:
+            task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+        elif current and current.phase in {TaskPhase.APPROVAL, TaskPhase.MERGING}:
+            return {"success": False, "task_id": task_id, "verified": False,
+                    "error": "Task is in approval/merge phase and cannot bypass that workflow."}
     task_manager.set_verified(task_id, verified)
+    if verified:
+        task_manager.transition_phase(task_id, TaskPhase.COMPLETED, evidence["evidence_id"] if evidence else None)
+    else:
+        task_manager.transition_phase(task_id, TaskPhase.FAILED)
     task_manager.update_status(task_id, TaskStatus.COMPLETED if verified else TaskStatus.FAILED)
     if summary and not verified:
         task_manager.add_issue(task_id, f"[SUMMARY] {summary}")
     try:
-        hooks_engine.fire("after_task_complete", {"task_id": task_id})
+        hooks_engine.fire("after_task_complete", {"task_id": task_id, "verified": verified})
     except Exception as exc:
         audit.log_task_event(task_id, "completion_hook_failed", detail=str(exc))
-    audit.log_task_event(task_id, "completed", detail=f"verified={verified}")
-    return {"success": True, "task_id": task_id, "verified": verified, "summary": summary}
+    audit.log_task_event(task_id, "completed", detail=f"verified={verified};evidence={evidence.get('evidence_id') if evidence else 'none'}")
+    return {"success": True, "task_id": task_id, "verified": verified, "summary": summary,
+            "phase": task_manager.get_task(task_id).phase.value,
+            "verification_evidence_id": evidence.get("evidence_id") if evidence else None}
 
 
 def add_task_issue(task_id: str, issue: str) -> Dict[str, Any]:
@@ -288,32 +359,43 @@ def plan_repair_attempt(task_id: str, failing_command: str, root_cause: str, pro
 
 
 def verify_task(task_id: str, test_command: Optional[str] = None, auto_complete: bool = True) -> Dict[str, Any]:
+    """Run independent configured tests and linters; only the resulting evidence can verify completion."""
     task = task_manager.get_task(task_id)
     if not task:
         return {"error": f"Task '{task_id}' not found."}
-    from app.tools.terminal import run_command
-    from app.tools.git import git_status
-    incomplete = [s for s in task.plan if s.status != "done"]
-    command = test_command or "pytest"
-    result = run_command(command)
-    passed = result.get("exit_code") == 0
-    task_manager.record_test_run(task_id, TestRun(command=command, exit_code=result.get("exit_code", -1),
-        duration_seconds=result.get("duration_seconds", 0.0), passed=passed,
-        stdout=str(result.get("stdout", ""))[:3000], stderr=str(result.get("stderr", ""))[:3000]))
-    git_state = git_status()
+    if task.phase == TaskPhase.COMPLETED:
+        return {"task_id": task_id, "verified": task.final_verified, "phase": task.phase.value,
+                "error": "Task is already completed; create a new task for additional changes."}
+    evidence = run_independent_verification(task_id)
+    refreshed = task_manager.get_task(task_id)
+    incomplete = [step for step in (refreshed.plan if refreshed else []) if step.status != "done"]
+    for check in evidence.get("checks", []):
+        if isinstance(check, dict):
+            task_manager.record_test_run(task_id, TestRun(
+                command=" ".join(check.get("command", [])), exit_code=check.get("exit_code", -1) if check.get("exit_code") is not None else -1,
+                duration_seconds=check.get("duration_seconds", 0.0), passed=bool(check.get("passed")),
+                stdout=str(check.get("stdout", ""))[:3000], stderr=str(check.get("stderr", ""))[:3000]))
+    passed = bool(evidence.get("passed"))
     all_verified = passed and not incomplete
     if all_verified and auto_complete:
-        task_manager.set_verified(task_id, True)
-        task_manager.update_status(task_id, TaskStatus.COMPLETED)
-        audit.log_task_event(task_id, "verified_complete", detail=f"tests_passed={passed}")
+        current = task_manager.get_task(task_id)
+        if current and current.phase == TaskPhase.REVIEW:
+            task_manager.set_verified(task_id, True)
+            task_manager.transition_phase(task_id, TaskPhase.COMPLETED, evidence.get("evidence_id"))
+            task_manager.update_status(task_id, TaskStatus.COMPLETED)
+            audit.log_task_event(task_id, "verified_complete", detail=f"evidence={evidence.get('evidence_id')}")
     elif not passed:
+        task_manager.set_verified(task_id, False)
         task_manager.update_status(task_id, TaskStatus.REPAIRING)
+    from app.tools.git import git_status
+    git_state = git_status()
     return {"task_id": task_id, "verified": all_verified, "tests_passed": passed,
-            "incomplete_steps": [{"index": s.index, "description": s.description} for s in incomplete],
+            "incomplete_steps": [{"index": step.index, "description": step.description} for step in incomplete],
+            "verification_evidence": evidence, "verification_evidence_id": evidence.get("evidence_id"),
             "git_status": {"modified_files": git_state.get("modified", []),
                            "untracked_files": git_state.get("untracked", []), "is_clean": git_state.get("clean", False)},
-            "diagnostics": result.get("diagnostics"),
-            "status": task_manager.get_task(task_id).status.value if task_manager.get_task(task_id) else "unknown"}
+            "status": task_manager.get_task(task_id).status.value if task_manager.get_task(task_id) else "unknown",
+            "phase": task_manager.get_task(task_id).phase.value if task_manager.get_task(task_id) else "unknown"}
 
 
 def run_autonomous_task(objective: str, requirements: Optional[List[str]] = None,
@@ -401,6 +483,7 @@ def start_chatgpt_coding_task(
     ]
     task = task_manager.create_task(objective, requirements or [], steps, max_repair_attempts)
     task_manager.update_status(task.id, TaskStatus.RUNNING)
+    task_manager.transition_phase(task.id, TaskPhase.EXECUTION)
     try:
         hooks_engine.fire("before_task_start", {"task_id": task.id, "objective": objective})
     except Exception as exc:
@@ -454,12 +537,20 @@ def record_chatgpt_task_progress(
     task_manager.mark_step(task_id, step_index, status, result[:3000])
     for path in files_modified or []:
         task_manager.record_file_modified(task_id, path)
+    refreshed_phase = task_manager.get_task(task_id)
+    if files_modified and refreshed_phase and refreshed_phase.phase in {TaskPhase.TESTING, TaskPhase.REVIEW}:
+        task_manager.transition_phase(task_id, TaskPhase.EXECUTION)
     if test_command is not None and test_exit_code is not None:
         task_manager.record_test_run(task_id, TestRun(
             command=test_command, exit_code=test_exit_code, duration_seconds=0.0,
             passed=test_exit_code == 0, stdout=test_stdout[:3000], stderr=test_stderr[:3000],
         ))
         task_manager.record_command(task_id, test_command)
+        phase_task = task_manager.get_task(task_id)
+        if phase_task and phase_task.phase == TaskPhase.EXECUTION:
+            task_manager.transition_phase(task_id, TaskPhase.TESTING)
+        elif phase_task and phase_task.phase == TaskPhase.REVIEW:
+            task_manager.transition_phase(task_id, TaskPhase.TESTING)
         if test_exit_code != 0:
             task_manager.update_status(task_id, TaskStatus.REPAIRING)
             if repair_note:
@@ -491,18 +582,35 @@ def finish_chatgpt_coding_task(
     task = task_manager.get_task(task_id)
     if not task:
         return {"error": f"Task '{task_id}' not found."}
+    if task.phase == TaskPhase.COMPLETED:
+        return {"success": bool(task.final_verified), "task_id": task_id, "status": task.status.value,
+                "verified": task.final_verified, "phase": task.phase.value,
+                "verification_evidence_id": task.verification_evidence_id,
+                "message": "Task is already completed; create a new task for additional changes."}
     if task.status == TaskStatus.FAILED:
         return {"success": False, "task_id": task_id, "status": "failed",
                 "error": task.error or "Task has failed; inspect issues before retrying."}
+    try:
+        _verification_root(task_id)
+    except Exception as exc:
+        return {"success": False, "task_id": task_id, "error": str(exc)}
     incomplete = [step.index for step in task.plan if step.status != "done"]
     from app.tools.terminal import run_command
     verification = run_command(verification_command)
-    passed = verification.get("exit_code") == 0
+    command_passed = verification.get("exit_code") == 0
     task_manager.record_test_run(task_id, TestRun(
         command=verification_command, exit_code=verification.get("exit_code", -1),
-        duration_seconds=verification.get("duration_seconds", 0.0), passed=passed,
+        duration_seconds=verification.get("duration_seconds", 0.0), passed=command_passed,
         stdout=str(verification.get("stdout", ""))[:3000], stderr=str(verification.get("stderr", ""))[:3000],
     ))
+    independent = None
+    if command_passed and not incomplete:
+        try:
+            from app.core.verification import verify_repository
+            independent = verify_repository(_verification_root(task_id), task_id)
+        except Exception as exc:
+            independent = {"passed": False, "error": str(exc)}
+    passed = command_passed and bool(independent and independent.get("passed"))
     if incomplete or not passed:
         task_manager.set_verified(task_id, False)
         task_manager.update_status(task_id, TaskStatus.REPAIRING if not passed else TaskStatus.RUNNING)
@@ -511,11 +619,28 @@ def finish_chatgpt_coding_task(
             "success": False, "task_id": task_id, "status": task_manager.get_task(task_id).status.value,
             "verified": False, "incomplete_steps": incomplete, "tests_passed": passed,
             "verification_command": verification_command,
+            "independent_verification": independent,
             "stdout": str(verification.get("stdout", ""))[-3000:],
             "stderr": str(verification.get("stderr", ""))[-3000:],
             "instruction": "Repair failures or mark each plan step done with evidence, then rerun final verification.",
         }
+    current = task_manager.get_task(task_id)
+    if current and current.phase == TaskPhase.PLANNING:
+        task_manager.transition_phase(task_id, TaskPhase.EXECUTION)
+        task_manager.transition_phase(task_id, TaskPhase.TESTING)
+        task_manager.transition_phase(task_id, TaskPhase.REVIEW, independent["evidence_id"])
+    elif current and current.phase == TaskPhase.EXECUTION:
+        task_manager.transition_phase(task_id, TaskPhase.TESTING)
+        task_manager.transition_phase(task_id, TaskPhase.REVIEW, independent["evidence_id"])
+    elif current and current.phase == TaskPhase.TESTING:
+        task_manager.transition_phase(task_id, TaskPhase.REVIEW, independent["evidence_id"])
+    elif current and current.phase == TaskPhase.REVIEW:
+        task_manager.transition_phase(task_id, TaskPhase.REVIEW, independent["evidence_id"])
+    elif current and current.phase in {TaskPhase.APPROVAL, TaskPhase.MERGING}:
+        return {"success": False, "task_id": task_id, "verified": False,
+                "error": "Task is in approval/merge phase and cannot bypass that workflow."}
     task_manager.set_verified(task_id, True)
+    task_manager.transition_phase(task_id, TaskPhase.COMPLETED, independent["evidence_id"])
     task_manager.update_status(task_id, TaskStatus.COMPLETED)
     audit.log_task_event(task_id, "chatgpt_web_task_completed", detail=summary[:1000])
     try:
@@ -525,7 +650,10 @@ def finish_chatgpt_coding_task(
     return {
         "success": True, "task_id": task_id, "status": "completed", "verified": True,
         "summary": summary, "verification_command": verification_command,
-        "tests_passed": True, "stdout": str(verification.get("stdout", ""))[-3000:],
+        "tests_passed": True, "independent_verification": independent,
+        "verification_evidence_id": independent.get("evidence_id"),
+        "phase": task_manager.get_task(task_id).phase.value,
+        "stdout": str(verification.get("stdout", ""))[-3000:],
         "stderr": str(verification.get("stderr", ""))[-3000:],
         "files_modified": task_manager.get_task(task_id).files_modified,
     }
@@ -550,3 +678,108 @@ def record_chatgpt_benchmark_result(
         case_name, agent_name, success, baseline_test_passed, final_test_passed,
         repair_attempts, tool_failures, latency_seconds, cost_usd, repository_revision, notes,
     )
+
+
+def start_coding_workers(task_id: str, objective: str, workers: Optional[List[str]] = None,
+                         timeout_seconds: Optional[int] = None) -> Dict[str, Any]:
+    """Start independent configured coding CLIs concurrently, each in its own Git worktree."""
+    from app.core.worker_runtime import worker_runtime
+    try:
+        return worker_runtime.start(task_id, objective, workers, timeout_seconds)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def get_coding_worker_job(job_id: str) -> Dict[str, Any]:
+    from app.core.worker_runtime import worker_runtime
+    try:
+        return worker_runtime.get(job_id)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def list_coding_worker_jobs(task_id: Optional[str] = None) -> Dict[str, Any]:
+    from app.core.worker_runtime import worker_runtime
+    rows = worker_runtime.list(task_id)
+    return {"total": len(rows), "jobs": rows}
+
+
+def cancel_coding_worker_job(job_id: str) -> Dict[str, Any]:
+    from app.core.worker_runtime import worker_runtime
+    try:
+        return worker_runtime.cancel(job_id)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def run_independent_verification(task_id: str = "", timeout_seconds: int = 600) -> Dict[str, Any]:
+    """Run configured tests and linters independently of coding-worker claims."""
+    from app.core.verification import verify_repository
+    try:
+        policy_engine.require_cmd_execute()
+        root = _verification_root(task_id)
+        evidence = verify_repository(root, task_id, timeout_seconds)
+        if task_id:
+            task = task_manager.get_task(task_id)
+            if task:
+                if task.phase == TaskPhase.PLANNING:
+                    task_manager.transition_phase(task_id, TaskPhase.EXECUTION)
+                    task_manager.transition_phase(task_id, TaskPhase.TESTING)
+                    if evidence.get("passed"):
+                        task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+                elif task.phase == TaskPhase.EXECUTION:
+                    task_manager.transition_phase(task_id, TaskPhase.TESTING)
+                    if evidence.get("passed"):
+                        task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+                elif task.phase == TaskPhase.TESTING:
+                    if evidence.get("passed"):
+                        task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+                elif task.phase == TaskPhase.REVIEW:
+                    if evidence.get("passed"):
+                        task_manager.transition_phase(task_id, TaskPhase.REVIEW, evidence["evidence_id"])
+                    else:
+                        task_manager.transition_phase(task_id, TaskPhase.TESTING)
+                if not evidence.get("passed") and task.phase != TaskPhase.COMPLETED:
+                    task_manager.set_verified(task_id, False)
+                    task_manager.update_status(task_id, TaskStatus.REPAIRING)
+        return evidence
+    except Exception as exc:
+        return {"passed": False, "error": str(exc)}
+
+
+def transition_task_phase(task_id: str, phase: str, evidence_id: Optional[str] = None) -> Dict[str, Any]:
+    """Move a task through the explicit planning/execution/testing/review/approval/merge state machine."""
+    try:
+        selected = TaskPhase(phase)
+        task_manager.transition_phase(task_id, selected, evidence_id)
+        audit.log_task_event(task_id, "phase_transition", detail=f"phase={selected.value};evidence={evidence_id or ''}")
+        return {"success": True, "task_id": task_id, "phase": selected.value,
+                "verification_evidence_id": task_manager.get_task(task_id).verification_evidence_id}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def start_worker_benchmark(cases_json: str, workers: Optional[List[str]] = None,
+                           timeout_seconds: Optional[int] = None) -> Dict[str, Any]:
+    """Run identical cases against configured coding CLIs on the same clean baseline revision."""
+    from app.core.worker_benchmark import start_benchmark
+    try:
+        cases = json.loads(cases_json)
+        if not isinstance(cases, list):
+            return {"error": "cases_json must decode to a JSON array."}
+        return start_benchmark(cases, workers, timeout_seconds)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def get_worker_benchmark(run_id: str) -> Dict[str, Any]:
+    from app.core.worker_benchmark import get_benchmark
+    try:
+        return get_benchmark(run_id)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def list_worker_benchmarks(limit: int = 50) -> Dict[str, Any]:
+    from app.core.worker_benchmark import list_benchmarks
+    return list_benchmarks(limit)

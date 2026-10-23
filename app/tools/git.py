@@ -402,6 +402,11 @@ def git_push(
                 return {"error": "Force push is only allowed in 'unrestricted' profile."}
             args.append("--force-with-lease")
         args.extend([safe_remote, f"HEAD:refs/heads/{safe_branch}"])
+        if settings.MCP_GIT_PUSH_REQUIRE_APPROVAL and not approval_manager.consume_approved(
+            approval_id, "git_push", target
+        ):
+            return {"error": f"Approval for '{target}' is invalid, expired, or already consumed.",
+                    "approval_required": True, "approval_target": target}
         pushed = _run_git(args, str(root), timeout=timeout)
         if pushed["exit_code"] != 0:
             audit.log_git_op("push_failed", _repo_name(), detail=f"{target} exit={pushed['exit_code']}")

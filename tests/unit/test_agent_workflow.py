@@ -1,9 +1,7 @@
 """
 Tests for strengthened agent workflow: plan repair attempts and task verification.
 """
-import pytest
 from app.tools import agent
-from app.core.task_state import task_manager, TaskStatus
 from app.core.session import session_manager
 
 
@@ -56,6 +54,10 @@ def test_plan_repair_attempt():
 
 
 def test_verify_task(test_environment, monkeypatch):
+    from app.core import verification
+    monkeypatch.setattr(verification, "verify_repository", lambda root, task_id, timeout_seconds=600: {
+        "passed": True, "evidence_id": "verify-task-evidence", "checks": [], "revision_stable": True
+    })
     session_manager.set_active_repo_name("Repo_A")
     task = agent.create_task(
         objective="Implement calculator function",

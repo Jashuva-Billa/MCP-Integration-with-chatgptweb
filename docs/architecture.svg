@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1080" viewBox="0 0 1200 1080" role="img" aria-labelledby="title desc">
+<title id="title">MCP Coding Tool architecture</title>
+<desc id="desc">AI clients connect through optional HTTPS ingress to an authenticated Starlette and MCP server. It routes repository-bound tools through security policy and task orchestration to file-backed state, workstreams, CLI coding workers, independent verification, benchmarking and a dashboard.</desc>
+<defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#64748b"/></marker>
+  <style>
+    .bg{fill:#f8fafc}.node{fill:#fff;stroke:#64748b;stroke-width:1.6;rx:14}.core{fill:#e0f2fe;stroke:#0284c7;stroke-width:2;rx:14}.green{fill:#dcfce7;stroke:#16a34a;stroke-width:1.8;rx:14}.purple{fill:#f3e8ff;stroke:#9333ea;stroke-width:1.7;rx:14}.muted{fill:#f1f5f9;stroke:#94a3b8;stroke-width:1.5;rx:14}.title{font:700 22px Arial,sans-serif;fill:#0f172a}.sub{font:14px Arial,sans-serif;fill:#334155}.small{font:13px Arial,sans-serif;fill:#475569}.line{stroke:#64748b;stroke-width:2;fill:none;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect class="bg" width="1200" height="1080" rx="20"/>
+<text x="600" y="42" text-anchor="middle" class="title" style="font-size:28px">MCP Coding Tool — System Architecture</text>
+<text x="600" y="68" text-anchor="middle" class="small">Model/client = reasoning · MCP service = controlled execution and orchestration</text>
+
+<rect x="390" y="96" width="420" height="70" class="node"/>
+<text x="600" y="124" text-anchor="middle" class="title">AI Coding Client</text>
+<text x="600" y="146" text-anchor="middle" class="sub">ChatGPT Web · other MCP clients</text>
+<path class="line" d="M600 166 V202"/>
+<rect x="390" y="204" width="420" height="62" class="muted"/>
+<text x="600" y="229" text-anchor="middle" class="title">Optional HTTPS Ingress</text>
+<text x="600" y="249" text-anchor="middle" class="sub">Cloudflare Tunnel / ngrok · not an auth boundary</text>
+<path class="line" d="M600 266 V302"/>
+<rect x="260" y="304" width="680" height="90" class="core"/>
+<text x="600" y="334" text-anchor="middle" class="title">ASGI + MCP Server · app/main.py</text>
+<text x="600" y="357" text-anchor="middle" class="sub">Starlette routes · MCP tool registration · Bearer middleware</text>
+<text x="600" y="377" text-anchor="middle" class="sub">Health · Tool catalog · Dashboard / API</text>
+<path class="line" d="M600 394 V430"/>
+<rect x="310" y="432" width="580" height="72" class="node"/>
+<text x="600" y="459" text-anchor="middle" class="title">Session &amp; Repository Context</text>
+<text x="600" y="482" text-anchor="middle" class="sub">Registered repositories · active workspace selection</text>
+
+<path class="line" d="M600 504 V534 H210 V560"/>
+<path class="line" d="M600 534 H600 V560"/>
+<path class="line" d="M600 534 H990 V560"/>
+<rect x="55" y="562" width="310" height="108" class="green"/>
+<text x="210" y="591" text-anchor="middle" class="title">Policy-Aware Tools</text>
+<text x="210" y="614" text-anchor="middle" class="sub">Files · editing · search · code intelligence</text>
+<text x="210" y="636" text-anchor="middle" class="sub">Terminal · Git · repository analysis</text>
+<text x="210" y="655" text-anchor="middle" class="small">Canonical paths · secrets · command policy</text>
+<rect x="445" y="562" width="310" height="108" class="purple"/>
+<text x="600" y="591" text-anchor="middle" class="title">Task Orchestrator</text>
+<text x="600" y="614" text-anchor="middle" class="sub">Task plans · phases · repair loops</text>
+<text x="600" y="636" text-anchor="middle" class="sub">Skills · hooks · checkpoints · approvals</text>
+<text x="600" y="655" text-anchor="middle" class="small">Workstream coordination</text>
+<rect x="835" y="562" width="310" height="108" class="node"/>
+<text x="990" y="591" text-anchor="middle" class="title">Observability UI</text>
+<text x="990" y="614" text-anchor="middle" class="sub">Dashboard · tasks · approvals · events</text>
+<text x="990" y="636" text-anchor="middle" class="sub">Checkpoints · diffs · recovery actions</text>
+<text x="990" y="655" text-anchor="middle" class="small">Protected by auth when enabled</text>
+
+<path class="line" d="M210 670 V708"/>
+<rect x="55" y="710" width="310" height="92" class="node"/>
+<text x="210" y="739" text-anchor="middle" class="title">Repository Workspaces</text>
+<text x="210" y="762" text-anchor="middle" class="sub">Registered local Git repositories</text>
+<text x="210" y="783" text-anchor="middle" class="small">Files appear directly in the local IDE</text>
+<path class="line" d="M600 670 V708"/>
+<rect x="445" y="710" width="310" height="92" class="core"/>
+<text x="600" y="739" text-anchor="middle" class="title">Coding Worker Runtime</text>
+<text x="600" y="762" text-anchor="middle" class="sub">Configured CLI processes · isolated worktrees</text>
+<text x="600" y="783" text-anchor="middle" class="small">Timeout · cancellation · logs · redaction</text>
+<path class="line" d="M990 670 V708"/>
+<rect x="835" y="710" width="310" height="92" class="muted"/>
+<text x="990" y="739" text-anchor="middle" class="title">Local Runtime State</text>
+<text x="990" y="762" text-anchor="middle" class="sub">JSON task/job/approval/audit records</text>
+<text x="990" y="783" text-anchor="middle" class="small">Evidence · checkpoints · benchmark runs</text>
+
+<path class="line" d="M600 802 V838 H300 V858"/>
+<path class="line" d="M600 838 V858"/>
+<path class="line" d="M600 838 H900 V858"/>
+<rect x="70" y="860" width="460" height="104" class="green"/>
+<text x="300" y="889" text-anchor="middle" class="title">Independent Verification</text>
+<text x="300" y="912" text-anchor="middle" class="sub">Fresh-process tests / lint · revision stability</text>
+<text x="300" y="934" text-anchor="middle" class="small">Persisted evidence IDs; no reliance on worker claims</text>
+<rect x="550" y="860" width="300" height="104" class="purple"/>
+<text x="700" y="889" text-anchor="middle" class="title">Benchmark Harness</text>
+<text x="700" y="912" text-anchor="middle" class="sub">Same cases · baseline revisions</text>
+<text x="700" y="934" text-anchor="middle" class="small">Verified outcomes · unknown cost stays null</text>
+<rect x="870" y="860" width="260" height="104" class="node"/>
+<text x="1000" y="889" text-anchor="middle" class="title">Git Delivery Gates</text>
+<text x="1000" y="912" text-anchor="middle" class="sub">Review · approval · push/merge</text>
+<text x="1000" y="934" text-anchor="middle" class="small">Never auto-merge worker output</text>
+<text x="600" y="1025" text-anchor="middle" class="small">Security note: permission checks complement, but do not replace, operating-system/container isolation.</text>
+</svg>
