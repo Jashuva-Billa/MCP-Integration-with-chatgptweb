@@ -1,8 +1,10 @@
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from app.core.repository import repository_manager
 from app.core.session import session_manager
+from app.config import settings
+
 
 def list_repositories() -> Dict[str, Any]:
     """
@@ -27,6 +29,7 @@ def list_repositories() -> Dict[str, Any]:
         ]
     }
 
+
 def select_repository(repository_name: str) -> Dict[str, Any]:
     """
     Select the active repository that will become the working workspace for the current MCP session.
@@ -38,6 +41,7 @@ def select_repository(repository_name: str) -> Dict[str, Any]:
         "message": message,
         "active_repository": session_manager.get_active_repo_name()
     }
+
 
 def get_current_repository() -> Dict[str, Any]:
     """
@@ -68,20 +72,47 @@ def get_current_repository() -> Dict[str, Any]:
         "git_branch": branch
     }
 
+
 def add_repository(name: str, path: str, description: str = "", enabled: bool = True) -> Dict[str, Any]:
     """
-    Add a new local repository path to the MCP workspace registry.
-    Does not modify or duplicate any application code.
+    Register an existing directory on the server. In cloud mode, prefer clone_github_repository.
     """
     try:
+        if settings.MCP_DEPLOYMENT_MODE.strip().lower() == "cloud":
+            allowed_root = Path(settings.MCP_WORKSPACE_ROOT).expanduser().resolve()
+            requested_path = Path(path).expanduser().resolve()
+            if requested_path == allowed_root or allowed_root not in requested_path.parents:
+                return {"error": "Cloud mode only allows registering repositories inside MCP_WORKSPACE_ROOT. Use clone_github_repository for remote code."}
         info = repository_manager.add_repository(name, path, description, enabled)
         return {"success": True, "message": f"Repository '{name}' added successfully.", "repository": info}
     except Exception as e:
         return {"error": str(e)}
 
+
+def clone_github_repository(
+    repository_url: str,
+    workspace_name: str,
+    branch: str = "",
+    description: str = "",
+) -> Dict[str, Any]:
+    """
+    Clone an explicitly allowlisted GitHub repository into the cloud workspace and register it.
+
+    Set MCP_GITHUB_ALLOWED_REPOS to comma-separated owner/repository slugs before using this tool.
+    For private repositories, set MCP_GITHUB_TOKEN as a secret in the hosting provider.
+    """
+    try:
+        if not settings.MCP_GITHUB_CLONE_ENABLED:
+            return {"error": "GitHub cloning is disabled. Set MCP_GITHUB_CLONE_ENABLED=true after configuring the repository allowlist."}
+        from app.core.github_workspace import clone_github_repository as clone_workspace
+        return clone_workspace(repository_url, workspace_name, branch, description)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def remove_repository(name: str) -> Dict[str, Any]:
     """
-    Remove a repository from the MCP workspace registry.
+    Remove a repository from the registry ONLY.
     SAFETY GUARANTEE: This only removes the registry entry; it NEVER deletes or modifies the physical repository on disk.
     """
     success = repository_manager.remove_repository(name)

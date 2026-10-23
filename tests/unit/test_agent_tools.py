@@ -122,7 +122,9 @@ def test_task_state_lifecycle():
     assert issue_res["success"] is True
     assert issue_res["issue"] == "Edge case: empty authorization header"
 
-    # 7. Complete task
+    # 7. Complete task only after all plan steps and a passing test are recorded
+    agent.update_task_step(task_id, step_index=2, status="done", result="Middleware updated")
+    agent.update_task_step(task_id, step_index=3, status="done", result="Tests passed")
     comp_res = agent.complete_task(task_id, verified=True)
     assert comp_res["success"] is True
     assert comp_res["verified"] is True
@@ -132,6 +134,15 @@ def test_task_state_lifecycle():
     assert final_task["status"] == "completed"
     assert final_task["final_verified"] is True
     assert len(final_task["outstanding_issues"]) == 1
+
+
+def test_verified_completion_rejects_incomplete_plan():
+    started = agent.create_task("Enforce verified completion", plan_steps=["Inspect", "Test"])
+    result = agent.complete_task(started["task_id"], verified=True)
+    assert result["success"] is False
+    assert result["verified"] is False
+    assert result["incomplete_steps"] == [1, 2]
+    assert result["passing_test_recorded"] is False
 
 
 def test_chatgpt_web_task_needs_no_api_provider():

@@ -19,7 +19,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.config import settings
 from app.core.audit import audit
+from app.core.approvals import approval_manager
 from app.core.permissions import PermissionProfile, PolicyViolation, policy_engine
 from app.core.security import security_engine
 from app.core.session import session_manager
@@ -359,14 +361,39 @@ def git_push(
     force: bool = False,
     set_upstream: bool = False,
     timeout: int = 60,
+    approval_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Push committed changes to a remote Git repository.
-    Requires 'trusted_admin' or 'unrestricted' profile. Network access must be authorized.
+    """Push only when explicitly enabled and authorized; verify the remote ref afterward.
+
+    When MCP_GIT_PUSH_REQUIRE_APPROVAL=true, approval_id must reference an approved,
+    unexpired request for the exact `git_push` operation and `remote/branch` target.
     """
     try:
         policy_engine.require_git_push()
         safe_remote = _sanitize_ref(remote) or "origin"
+        if safe_remote != remote.strip():
+            return {"error": "Remote contains unsupported characters."}
+        root = _repo_root()
+        if branch is None:
+            current = _run_git(["branch", "--show-current"], str(root))
+            if current["exit_code"] != 0 or not current["stdout"].strip():
+                return {"error": "Could not determine the current branch; specify branch explicitly."}
+            safe_branch = current["stdout"].strip()
+        else:
+            safe_branch = _sanitize_ref(branch)
+            if (not safe_branch or safe_branch != branch.strip() or ".." in safe_branch
+                    or safe_branch.startswith("-") or safe_branch.endswith("/") or "//" in safe_branch):
+                return {"error": "Branch contains unsupported Git ref characters."}
+        target = f"{safe_remote}/{safe_branch}"
+        if settings.MCP_GIT_PUSH_REQUIRE_APPROVAL and not approval_manager.is_approved(
+            approval_id, "git_push", target
+        ):
+            audit.log_tool("git_push", {"remote": safe_remote, "branch": safe_branch}, success=False,
+                           error="Matching approved request required", repository=_repo_name(),
+                           profile=policy_engine.profile.value)
+            return {"error": f"An approved, unexpired request for git_push target '{target}' is required.",
+                    "approval_required": True, "approval_target": target}
+
         args = ["push"]
         if set_upstream:
             args.append("-u")
@@ -374,27 +401,40 @@ def git_push(
             if policy_engine.profile != PermissionProfile.UNRESTRICTED:
                 return {"error": "Force push is only allowed in 'unrestricted' profile."}
             args.append("--force-with-lease")
-        args.append(safe_remote)
-        if branch:
-            args.append(_sanitize_ref(branch))
+        args.extend([safe_remote, f"HEAD:refs/heads/{safe_branch}"])
+        pushed = _run_git(args, str(root), timeout=timeout)
+        if pushed["exit_code"] != 0:
+            audit.log_git_op("push_failed", _repo_name(), detail=f"{target} exit={pushed['exit_code']}")
+            return {"repository": _repo_name(), "remote": safe_remote, "branch": safe_branch,
+                    "success": False, "exit_code": pushed["exit_code"],
+                    "stdout": pushed["stdout"], "stderr": pushed["stderr"],
+                    "remote_verified": False}
 
-        root = _repo_root()
-        r = _run_git(args, str(root), timeout=timeout)
-        audit.log_git_op("push", _repo_name(), detail=f"{safe_remote} {branch or 'current'} force={force}")
+        local = _run_git(["rev-parse", "HEAD"], str(root))
+        remote_state = _run_git(["ls-remote", safe_remote, f"refs/heads/{safe_branch}"], str(root), timeout=timeout)
+        local_sha = local["stdout"].strip()
+        remote_sha = remote_state["stdout"].split()[0] if remote_state["stdout"].split() else ""
+        verified = (local["exit_code"] == 0 and remote_state["exit_code"] == 0
+                    and bool(local_sha) and local_sha == remote_sha)
+        audit.log_git_op("push_verified" if verified else "push_verification_failed", _repo_name(),
+                         detail=f"{target} force={force} verified={verified}")
         return {
-            "repository": _repo_name(),
-            "remote": safe_remote,
-            "branch": branch or "current",
-            "success": r["exit_code"] == 0,
-            "exit_code": r["exit_code"],
-            "stdout": r["stdout"],
-            "stderr": r["stderr"],
+            "repository": _repo_name(), "remote": safe_remote, "branch": safe_branch,
+            "success": verified, "push_exit_code": pushed["exit_code"],
+            "stdout": pushed["stdout"], "stderr": pushed["stderr"],
+            "remote_verified": verified, "local_sha": local_sha or None,
+            "remote_sha": remote_sha or None,
+            "verification_error": None if verified else "Push command succeeded, but remote HEAD could not be confirmed to match local HEAD.",
         }
     except PolicyViolation as pv:
+        audit.log_permission_denied("git_push", "git_push", policy_engine.profile.value)
         return {"error": f"Permission denied: {pv}"}
     except subprocess.TimeoutExpired:
-        return {"error": f"git push timed out after {timeout}s"}
+        audit.log_git_op("push_timeout", _repo_name(), detail="git push or remote verification timed out")
+        return {"error": f"git push or verification timed out after {timeout}s"}
     except Exception as e:
+        audit.log_tool("git_push", {"remote": remote, "branch": branch}, success=False,
+                       error=str(e), repository=_repo_name(), profile=policy_engine.profile.value)
         return {"error": str(e)}
 
 

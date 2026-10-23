@@ -351,7 +351,7 @@ def move_file(src: str, dst: str, overwrite: bool = False) -> Dict[str, Any]:
         _fire_mutation_hook("after_file_edit", dst_resolved, "move")
 
         dst_rel = str(dst_resolved.relative_to(session_manager.get_active_repo_path())).replace("\\", "/")
-        audit.log_file_change("move", f"{src} → {dst_rel}", _repo())
+        audit.log_file_change("move", f"{src} -> {dst_rel}", _repo())
         return {"success": True, "source": src, "destination": dst_rel, "checkpoints": checkpoints}
     except PolicyViolation as pv:
         audit.log_permission_denied("move_file", "fs_move_rename", policy_engine.profile.value)

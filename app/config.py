@@ -14,9 +14,20 @@ class Settings(BaseSettings):
     MCP_PORT: int = 8766
     MCP_LOG_LEVEL: str = "INFO"
 
-    # Authentication Configuration
+    # Authentication Configuration. Cloud mode always requires a strong token.
     MCP_AUTH_ENABLED: bool = False
     MCP_AUTH_TOKEN: str = ""
+    MCP_DEPLOYMENT_MODE: str = "local"  # local | cloud
+
+    # Hosted GitHub workspaces. Comma-separated OWNER/REPOSITORY allowlist.
+    MCP_GITHUB_CLONE_ENABLED: bool = False
+    MCP_GITHUB_ALLOWED_REPOS: str = ""
+    MCP_GITHUB_TOKEN: str = ""
+    MCP_WORKSPACE_ROOT: str = "/tmp/mcp-workspaces"
+
+    # Remote Git delivery is opt-in and can require a matching, unexpired approval.
+    MCP_GIT_PUSH_ENABLED: bool = False
+    MCP_GIT_PUSH_REQUIRE_APPROVAL: bool = True
 
     # Optional OpenAI-compatible model provider for autonomous orchestration
     MCP_LLM_API_KEY: str = ""

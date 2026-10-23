@@ -44,6 +44,24 @@ def test_checkpoint_restores_existing_and_new_files(tmp_path):
     assert (directory / "keep.txt").read_text(encoding="utf-8") == "keep"
 
 
+def test_checkpoint_refuses_cross_repository_rollback(tmp_path):
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / "same.txt").write_text("original", encoding="utf-8")
+    (repo_b / "same.txt").write_text("do not overwrite", encoding="utf-8")
+    store = CheckpointStore(tmp_path / "checkpoints")
+    checkpoint = store.create("task-cross-root", "same.txt", repo_a)
+    try:
+        store.rollback(checkpoint["checkpoint_id"], "task-cross-root", repo_b)
+    except ValueError as exc:
+        assert "active repository root" in str(exc)
+    else:
+        raise AssertionError("cross-repository checkpoint rollback must be rejected")
+    assert (repo_b / "same.txt").read_text(encoding="utf-8") == "do not overwrite"
+
+
 def test_orchestrator_runs_actions_and_finishes(test_environment, tmp_path, monkeypatch):
     repo = test_environment["repo_a"]
     session_manager.set_active_repo_name("Repo_A")

@@ -4,7 +4,8 @@ Verifies profile behavior, capability gating, runtime profile switching,
 and denial messages.
 """
 import pytest
-from app.core.permissions import PermissionProfile, PolicyViolation, PolicyRules, PROFILES, PolicyEngine
+from app.config import settings
+from app.core.permissions import PermissionProfile, PolicyViolation, PROFILES, PolicyEngine
 
 
 def test_safe_profile_denies_delete_file():
@@ -45,7 +46,8 @@ def test_full_profile_denies_git_push():
         engine.require_git_push()
 
 
-def test_unrestricted_allows_git_push():
+def test_unrestricted_allows_git_push(monkeypatch):
+    monkeypatch.setattr(settings, "MCP_GIT_PUSH_ENABLED", True)
     engine = PolicyEngine.__new__(PolicyEngine)
     engine._profile = PermissionProfile.UNRESTRICTED
     engine._rules = PROFILES[PermissionProfile.UNRESTRICTED]
@@ -115,7 +117,8 @@ def test_describe_returns_dict():
     assert "git_commit" in d
 
 
-def test_trusted_admin_profile_capabilities():
+def test_trusted_admin_profile_capabilities(monkeypatch):
+    monkeypatch.setattr(settings, "MCP_GIT_PUSH_ENABLED", True)
     engine = PolicyEngine.__new__(PolicyEngine)
     engine._profile = PermissionProfile.TRUSTED_ADMIN
     engine._rules = PROFILES[PermissionProfile.TRUSTED_ADMIN]

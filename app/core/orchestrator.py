@@ -9,6 +9,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import time
 import urllib.error
@@ -120,6 +121,8 @@ class CheckpointStore:
             shutil.copytree(target, backup, symlinks=True)
         manifest = {
             "checkpoint_id": checkpoint_id, "task_id": task_id,
+            "repository_root": str(root),
+            "repository": session_manager.get_active_repo_name() or "",
             "path": relative_path.replace("\\", "/"), "kind": kind,
             "existed": kind != "missing",
             "backup_path": str(backup) if kind != "missing" else None,
@@ -129,12 +132,19 @@ class CheckpointStore:
         return manifest
 
     def rollback(self, checkpoint_id: str, task_id: str, repo_root: Path) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id or ""):
+            raise ValueError("Invalid checkpoint task identifier.")
+        if not re.fullmatch(r"[a-fA-F0-9]{12}", checkpoint_id or ""):
+            raise ValueError("Invalid checkpoint identifier.")
         candidates = list((self.root / task_id).glob(f"{checkpoint_id}/manifest.json"))
         if not candidates:
             raise ValueError(f"Checkpoint '{checkpoint_id}' was not found for task '{task_id}'.")
         manifest = json.loads(candidates[0].read_text(encoding="utf-8"))
         target = (repo_root / manifest["path"]).resolve()
         root = repo_root.resolve()
+        recorded_root = manifest.get("repository_root")
+        if not recorded_root or Path(recorded_root).resolve() != root:
+            raise ValueError("Checkpoint does not belong to the active repository root; refusing cross-repository rollback.")
         if target == root or root not in target.parents:
             raise ValueError("Rollback target escapes the active repository.")
         kind = manifest.get("kind", "file" if manifest.get("existed") else "missing")

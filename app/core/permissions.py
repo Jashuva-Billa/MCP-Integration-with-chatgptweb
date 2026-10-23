@@ -18,7 +18,6 @@ import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import FrozenSet, Optional, Set
 
 from app.config import settings
@@ -252,7 +251,7 @@ class PolicyEngine:
         old = self._profile
         self._profile = profile
         self._rules = PROFILES[profile]
-        logger.warning("Permission profile changed: %s → %s", old.value, profile.value)
+        logger.warning("Permission profile changed: %s -> %s", old.value, profile.value)
         if profile == PermissionProfile.UNRESTRICTED:
             logger.warning(
                 "UNRESTRICTED mode active — arbitrary commands permitted locally."
@@ -266,7 +265,7 @@ class PolicyEngine:
         msg = (
             f"Operation denied by '{self._profile.value}' permission profile: {capability}."
             + (f" {hint}" if hint else "")
-            + f" To enable, set MCP_PERMISSION_PROFILE=full, trusted_admin, or unrestricted."
+            + " Review the active permission profile and capability-specific settings."
         )
         logger.warning("POLICY DENIED [%s]: %s", self._profile.value, capability)
         raise PolicyViolation(msg)
@@ -313,8 +312,10 @@ class PolicyEngine:
             self._deny("git commit")
 
     def require_git_push(self) -> None:
+        if not settings.MCP_GIT_PUSH_ENABLED:
+            self._deny("git push", "Git push is disabled by MCP_GIT_PUSH_ENABLED=false. Enable it explicitly in the server environment.")
         if not self._rules.git_push:
-            self._deny("git push", "Push is disabled by default in safe and full profiles. Use 'trusted_admin' or 'unrestricted'.")
+            self._deny("git push", "The active permission profile does not authorize Git push; use trusted_admin or unrestricted only when appropriate.")
         self.require_network("git push")
 
     def require_git_fetch(self) -> None:
@@ -376,7 +377,9 @@ class PolicyEngine:
             "git_read": r.git_read,
             "git_stage": r.git_stage,
             "git_commit": r.git_commit,
-            "git_push": r.git_push,
+            "git_push": r.git_push and settings.MCP_GIT_PUSH_ENABLED,
+            "git_push_enabled_by_config": settings.MCP_GIT_PUSH_ENABLED,
+            "git_push_requires_approval": settings.MCP_GIT_PUSH_REQUIRE_APPROVAL,
             "git_reset_hard": r.git_reset_hard,
             "git_branch_create": r.git_branch_create,
             "network_access": r.network_access,

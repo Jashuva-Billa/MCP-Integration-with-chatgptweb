@@ -40,6 +40,8 @@ A production-grade, standalone **Model Context Protocol (MCP)** server that conn
 
 ## 2. Quick Start & Setup
 
+For a hosted, always-remote Docker deployment (with allowlisted GitHub workspaces rather than files on a powered-off PC), see [Free Cloud Deployment](docs/FREE_CLOUD_DEPLOYMENT.md).
+
 ### Prerequisites
 - **Python 3.10+**
 - **Cloudflare Tunnel (`cloudflared`)** for secure remote HTTPS connectivity:
@@ -159,13 +161,13 @@ If you use VS Code extensions that support MCP (such as GitHub Copilot MCP previ
 
 ---
 
-## 6. Available MCP Tools (61 Tools Across 15 Categories)
+## 6. Available MCP Tools (81 Tools Across 20 Capability Categories)
 
-The server exposes 61 specialized MCP tools across 15 capability categories:
+The server currently registers 81 MCP tools across workspace, filesystem, Git, approvals, parallel workstreams, and autonomous coding capabilities:
 
 | Category | Tools | Description |
 | :--- | :--- | :--- |
-| **Workspace Management** | `list_repositories`, `select_repository`, `get_current_repository`, `add_repository`, `remove_repository` | Manage multi-repo workspaces dynamically without restarting the server. |
+| **Workspace Management** | `list_repositories`, `select_repository`, `get_current_repository`, `add_repository`, `clone_github_repository`, `remove_repository` | Manage local workspaces and clone explicitly allowlisted GitHub repositories for remote-hosted use. |
 | **Filesystem (Read)** | `list_files`, `read_file` | Read files safely with line slicing and secret protection. |
 | **Filesystem (Write)** | `write_file`, `create_directory` | Create or update files and directories within repo boundaries. |
 | **Filesystem (Destructive)** | `delete_file`, `delete_directory`, `move_file`, `copy_file` | Policy-gated directory deletion (with dry-run preview), file moves, and copies. |
@@ -180,7 +182,9 @@ The server exposes 61 specialized MCP tools across 15 capability categories:
 | **Execution Profile** | `get_execution_profile`, `configure_execution_profile` | Persistent autonomy, automatic skills, bounded repair loops, parallel workstream planning, Git delivery policy, and checkpoint policy. |
 | **Skills System** | `prepare_task_workflow`, `list_skills`, `get_skill`, `reload_skills` | Automatically routes tasks to relevant skills and superpowers; skill instructions are read before execution. |
 | **Lifecycle Hooks** | `list_hooks`, `fire_hook` | User-defined pre/post commands for file edits, tests, and commits (`.mcp/hooks.json`). |
-| **Autonomous Workflow & State** | `create_task`, `get_task`, `list_tasks`, `update_task_step`, `complete_task`, `add_task_issue`, `record_test_result`, `plan_repair_attempt`, `verify_task` | Multi-step planning, automated hypothesis-driven test-repair loops, and structured goal verification. |
+| **Autonomous Workflow & State** | `create_task`, `get_task`, `list_tasks`, `update_task_step`, `complete_task`, `add_task_issue`, `record_test_result`, `plan_repair_attempt`, `verify_task`, `start_chatgpt_coding_task`, `record_chatgpt_task_progress`, `finish_chatgpt_coding_task` | Persistent plans, bounded repairs, and verification-gated completion. |
+| **Approvals** | `request_approval`, `resolve_approval`, `list_approvals` | Expiring, target-specific approvals for privileged operations with audit logging. |
+| **Parallel Workstreams** | `create_parallel_workstream`, `list_parallel_workstreams`, `validate_parallel_workstream`, `merge_parallel_workstream`, `remove_parallel_workstream` | Isolated Git worktrees, independent worker paths, test validation, and approved merge coordination. |
 
 ---
 
@@ -249,7 +253,7 @@ Configure automated commands triggered during agent execution:
 
 ## 10. Running Automated Tests
 
-Run the full test suite (79 tests covering unit, integration, security, command diagnostics, git remote, and E2E):
+Run the full test suite (129 tests covering unit, integration, security, command diagnostics, approvals, workstreams, Git remote verification, and E2E):
 ```powershell
 python -m pytest -v
 ```
@@ -295,6 +299,6 @@ Key tools:
 - `rollback_task_checkpoint` and `rollback_git_reset_checkpoint`: recover changes.
 - `record_chatgpt_benchmark_result` and `get_benchmark_report`: compare ChatGPT Web and Claude Code on the same cases without an API.
 
-See `docs/AUTONOMOUS_ORCHESTRATION.md` for the execution loop, checkpoint behavior, and benchmark workflow.
+Open `http://127.0.0.1:8766/dashboard` for the live task dashboard when running locally. Remote Git push is disabled unless `MCP_GIT_PUSH_ENABLED=true`; matching approval is required by default via `MCP_GIT_PUSH_REQUIRE_APPROVAL=true`. See `docs/AUTONOMOUS_ORCHESTRATION.md` for the execution loop and `docs/PRODUCTION_READINESS.md` for dashboard, approval, workstream, push-verification, and benchmark-comparability details.
 
 Important: the MCP server cannot spawn independent ChatGPT Web model sessions. Reviews can be performed as separate passes in the current ChatGPT conversation, while filesystem changes remain checkpointed and permission-controlled. The API-backed benchmark runner is optional and is not needed for this workflow. Git commits and pushes are not performed unless explicitly requested.

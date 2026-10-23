@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,19 @@ def _append(record: dict[str, Any]) -> None:
     _BENCH_DIR.mkdir(parents=True, exist_ok=True)
     with _BENCH_FILE.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def _repository_snapshot() -> dict[str, Any]:
+    root = Path(session_manager.get_active_repo_path()).resolve()
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(root), capture_output=True,
+                              text=True, timeout=10, check=False)
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=str(root), capture_output=True,
+                            text=True, timeout=10, check=False)
+    return {
+        "revision": revision.stdout.strip() if revision.returncode == 0 else None,
+        "working_tree_clean": status.returncode == 0 and not status.stdout.strip(),
+        "changed_files": len(status.stdout.splitlines()) if status.returncode == 0 else None,
+    }
 
 
 def run_coding_benchmark(
@@ -39,9 +53,11 @@ def run_coding_benchmark(
     if len(cases) > 50:
         return {"error": "At most 50 benchmark cases can run per invocation."}
     repo = session_manager.get_active_repo_name() or "unknown"
+    baseline_snapshot = _repository_snapshot()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + str(time.time_ns())[-6:]
     records: list[dict[str, Any]] = []
     for case in cases:
+        case_start_snapshot = _repository_snapshot()
         name = str(case.get("name", "unnamed"))[:120]
         objective = str(case.get("objective", "")).strip()
         if not objective:
@@ -63,9 +79,16 @@ def run_coding_benchmark(
         final_test = run_command(str(final_command)) if final_command else None
         final_passed = final_test.get("exit_code") == 0 if final_test else None
         metrics = result.get("metrics") or {}
+        case_final_snapshot = _repository_snapshot()
         record = {
             "run_id": run_id, "agent": "MCP autonomous orchestrator", "case_name": name,
             "repository": repo, "objective": objective, "success": bool(result.get("verified")) and final_passed is not False,
+            "baseline_revision": baseline_snapshot["revision"],
+            "case_start_revision": case_start_snapshot["revision"],
+            "final_revision": case_final_snapshot["revision"],
+            "baseline_worktree_clean": baseline_snapshot["working_tree_clean"],
+            "case_start_worktree_clean": case_start_snapshot["working_tree_clean"],
+            "comparable_to_baseline": bool(baseline_snapshot["working_tree_clean"] and case_start_snapshot["working_tree_clean"]),
             "status": result.get("status"), "regression": bool(baseline_passed and final_passed is False),
             "baseline_test_passed": baseline_passed, "final_test_passed": final_passed,
             "repair_attempts": metrics.get("repair_attempts", 0),
@@ -96,9 +119,32 @@ def run_coding_benchmark(
         names = sorted({str(item["agent"]) for item in normalized_external})
         for agent_name in names:
             comparisons.append(_aggregate(agent_name, [x for x in normalized_external if x["agent"] == agent_name]))
-    return {"run_id": run_id, "repository": repo, "case_count": len(cases),
-            "results": records, "comparison": comparisons,
-            "note": "Cost is null unless supplied by a provider. For fair Claude Code comparisons, run the same cases and record its outcomes in external_results."}
+    local_case_names = sorted(str(item.get("case_name", "")) for item in records)
+    external_case_names = sorted(str(item.get("case_name", "")) for item in (external_results or []))
+    revisions_match = bool(external_results) and all(
+        item.get("repository_revision") == baseline_snapshot["revision"] for item in external_results
+    )
+    comparable = bool(
+        baseline_snapshot["working_tree_clean"]
+        and all(item.get("comparable_to_baseline", False) for item in records if "comparable_to_baseline" in item)
+        and external_results
+        and local_case_names == external_case_names
+        and revisions_match
+    )
+    return {
+        "run_id": run_id, "repository": repo, "case_count": len(cases),
+        "baseline_revision": baseline_snapshot["revision"],
+        "baseline_worktree_clean": baseline_snapshot["working_tree_clean"],
+        "baseline_changed_file_count": baseline_snapshot["changed_files"],
+        "results": records, "comparison": comparisons,
+        "comparison_quality": {
+            "comparable": comparable,
+            "same_case_set": bool(external_results) and local_case_names == external_case_names,
+            "external_revision_matches": revisions_match,
+            "reason": "Comparable only when the baseline was clean, both agents ran the same cases, and external repository_revision matches baseline_revision.",
+        },
+        "note": "Cost is null unless supplied by a provider. Run benchmarks from a clean commit and use the same case set, test commands, and repository revision for each agent. Cases that start with a dirty worktree are flagged non-comparable.",
+    }
 
 
 def _aggregate(agent: str, records: list[dict[str, Any]]) -> dict[str, Any]:

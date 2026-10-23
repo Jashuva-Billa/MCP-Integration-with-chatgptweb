@@ -1,16 +1,18 @@
-version: '3.8'
-
 services:
   mcp-server:
     build: .
     container_name: mcp-chatgpt-server
     ports:
-      - "8766:8766"
+      - "8766:10000"
     environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8766
-      - MCP_AUTH_ENABLED=false
-      - MCP_LOG_LEVEL=INFO
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 10000
+      MCP_DEPLOYMENT_MODE: local
+      MCP_AUTH_ENABLED: "true"
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in your environment before running Docker Compose}
+      MCP_ALLOWED_HOSTS: localhost:8766,127.0.0.1:8766
+      MCP_LOG_LEVEL: INFO
+      MCP_PERMISSION_PROFILE: safe
     volumes:
       - ./config:/app/config
       - /c/Development:/workspaces:ro

@@ -7,6 +7,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from app.core.audit import audit
+from app.core.approvals import approval_manager
 from app.core.execution_profile import execution_profile
 from app.core.hooks import hooks_engine
 from app.core.permissions import PermissionProfile, policy_engine
@@ -143,6 +144,69 @@ def list_tasks(status_filter: Optional[str] = None) -> Dict[str, Any]:
     return {"total": len(tasks), "tasks": tasks}
 
 
+def request_approval(operation: str, target: str, details: str = "", ttl_minutes: int = 60) -> Dict[str, Any]:
+    """Create a time-limited approval request for a specific privileged action and target."""
+    try:
+        return {"success": True, "approval": approval_manager.request(operation, target, details, ttl_minutes)}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def resolve_approval(approval_id: str, decision: str, resolved_by: str = "user") -> Dict[str, Any]:
+    """Approve or deny a pending action; decisions are persisted and audit logged."""
+    try:
+        return {"success": True, "approval": approval_manager.resolve(approval_id, decision, resolved_by)}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def list_approvals(status_filter: Optional[str] = None) -> Dict[str, Any]:
+    if status_filter and status_filter not in {"pending", "approved", "denied", "expired"}:
+        return {"error": "status_filter must be pending, approved, denied, or expired."}
+    rows = approval_manager.list(status_filter)
+    return {"total": len(rows), "approvals": rows}
+
+
+def create_parallel_workstream(task_id: str, worker_name: str, base_ref: str = "HEAD") -> Dict[str, Any]:
+    """Create an isolated Git worktree for a separately operated worker/client."""
+    from app.core.workstreams import workstream_manager
+    try:
+        return {"success": True, "workstream": workstream_manager.create(task_id, worker_name, base_ref),
+                "important_boundary": "This provisions an isolated worktree; it does not spawn a separate ChatGPT Web session. Connect an independent coding worker to the returned path."}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def list_parallel_workstreams(task_id: Optional[str] = None) -> Dict[str, Any]:
+    from app.core.workstreams import workstream_manager
+    rows = workstream_manager.list(task_id)
+    return {"total": len(rows), "workstreams": rows}
+
+
+def validate_parallel_workstream(workstream_id: str, test_command: str) -> Dict[str, Any]:
+    from app.core.workstreams import workstream_manager
+    try:
+        return {"success": True, **workstream_manager.validate(workstream_id, test_command)}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def merge_parallel_workstream(workstream_id: str, target_branch: str, test_command: str, approval_id: str) -> Dict[str, Any]:
+    from app.core.workstreams import workstream_manager
+    try:
+        return workstream_manager.merge(workstream_id, target_branch, test_command, approval_id)
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def remove_parallel_workstream(workstream_id: str) -> Dict[str, Any]:
+    from app.core.workstreams import workstream_manager
+    try:
+        return workstream_manager.remove(workstream_id)
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 def update_task_step(task_id: str, step_index: int, status: str, result: Optional[str] = None) -> Dict[str, Any]:
     task = task_manager.get_task(task_id)
     if not task:
@@ -158,6 +222,15 @@ def complete_task(task_id: str, verified: bool = True, summary: Optional[str] = 
     task = task_manager.get_task(task_id)
     if not task:
         return {"error": f"Task '{task_id}' not found."}
+    if verified:
+        incomplete = [step.index for step in task.plan if step.status != "done"]
+        passing_test = any(run.passed for run in task.test_runs)
+        if incomplete or not passing_test:
+            return {
+                "success": False, "task_id": task_id, "verified": False,
+                "incomplete_steps": incomplete, "passing_test_recorded": passing_test,
+                "error": "Cannot mark verified: every plan step must be done and at least one passing test run must be recorded.",
+            }
     task_manager.set_verified(task_id, verified)
     task_manager.update_status(task_id, TaskStatus.COMPLETED if verified else TaskStatus.FAILED)
     if summary and not verified:

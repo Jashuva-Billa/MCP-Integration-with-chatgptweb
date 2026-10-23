@@ -18,7 +18,6 @@ import os
 import re
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
 _SECRET_RE = re.compile(
@@ -158,6 +157,26 @@ class AuditLogger:
         if detail:
             entry["detail"] = detail
         self._write(entry)
+
+    def recent_events(self, task_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+        """Return a bounded tail of redacted audit events for dashboard/log inspection."""
+        limit = max(1, min(int(limit), 500))
+        try:
+            lines = self._log_path.read_text(encoding="utf-8").splitlines()[-5000:]
+        except OSError:
+            return []
+        events: list[dict[str, Any]] = []
+        for line in reversed(lines):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if task_id and row.get("task_id") != task_id:
+                continue
+            events.append(row)
+            if len(events) >= limit:
+                break
+        return list(reversed(events))
 
 
 # Singleton
