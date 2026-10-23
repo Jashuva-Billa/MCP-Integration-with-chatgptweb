@@ -6,33 +6,25 @@ The standalone MCP server enforces defense-in-depth across six distinct security
 
 ```
 [Incoming Request]
-       │
-       ▼
-┌─────────────────────────────────┐
-│ 1. Bearer Authentication Guard  │ ──► [Invalid/Missing Token: 401 Unauthorized]
-└──────────────┬──────────────────┘
-               │
-               ▼
-┌─────────────────────────────────┐
-│ 2. Session Isolation Controller │ ──► [Unselected Repo: 400 Bad Request]
-└──────────────┬──────────────────┘
-               │ Active Workspace: C:\Development\RepoA
-               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   3. SecurityEngine Layer                   │
-└──────┬───────────────────────┬───────────────────────┬──────┘
-       │                       │                       │
-       ▼                       ▼                       ▼
-[Path Traversal Check]   [Secret Shield]      [Command Allowlist]
-- Canonical .resolve()   - Block .env, *.key  - Permitted: python, pytest,
-- Strict .is_relative_to - Block *.pem, *.p12   npm, git, ruff, mypy
-- Check symlink targets  - Block credentials  - Denied: rm -rf, del /s,
-- Block UNC network      - Block tokens, certs  format, git push/commit
-       │                       │                       │
-       └───────────────────────┼───────────────────────┘
-                               │ (All checks PASS)
-                               ▼
-                   [Execute Local Operation]
+       |
+       v
+[Bearer Authentication Guard] -> [Invalid/Missing Token: 401 Unauthorized]
+       |
+       v
+[Session Isolation Controller] -> [Unselected Repo: 400 Bad Request]
+       |
+       v
+[SecurityEngine Layer]
+       |                    |                  |
+       v                    v                  v
+[Path Traversal Check] [Secret Shield] [Command Allowlist]
+- Canonical .resolve() - Block .env, *.key - Approved binaries only
+- Strict root boundary - Block *.pem, *.p12 - Deny dangerous patterns
+- Check symlink targets - Block credentials
+- Block UNC network
+       |
+       v
+[Execute Local Operation]
 ```
 
 ---
@@ -40,9 +32,9 @@ The standalone MCP server enforces defense-in-depth across six distinct security
 ## 2. Path Traversal & Filesystem Containment
 
 - **Canonical Path Resolution**: All file and directory operations use `Path.resolve()` to eliminate relative dot-dot (`..`) traversal patterns.
-- **Strict Boundary Check**: Every resolved path is checked with `target.is_relative_to(clean_root)`. Any path attempting to access system folders (`C:\Windows`, `/etc/`), external directories, or other registered repositories raises a `SecurityError`.
+- **Strict Boundary Check**: Every resolved path is checked against the active repository root. Any path attempting to access system folders, external directories, or other registered repositories raises a `SecurityError`.
 - **Symlink Escape Guard**: Symlinks targeting locations outside the active repository root are detected and blocked.
-- **UNC Paths**: Network share paths (`\\\\server\\share`) are unconditionally rejected.
+- **UNC Paths**: Network share paths are unconditionally rejected.
 
 ---
 
@@ -61,6 +53,7 @@ Access to files matching the following patterns is strictly prohibited during `r
 ## 4. Command Security & Terminal Sandbox
 
 - **Working Directory**: Terminal commands execute with `cwd` locked to the active repository root.
-- **Allowed Binaries**: Only approved development binaries (`python`, `pytest`, `pip`, `npm`, `node`, `git`, `ruff`, `mypy`, `cargo`, `go`, etc.) are permitted.
-- **Blocked Commands**: Destructive commands (`rm -rf`, `del /s`, `format`, `shutdown`, `diskpart`, `git reset --hard`, `git push`, `git commit`) are strictly rejected.
+- **Allowed Binaries**: Approved development binaries include `python`, `pytest`, `pip`, `npm`, `node`, `git`, `ruff`, `mypy`, `cargo`, `go`, `powershell`, and `pwsh`.
+- **PowerShell**: `powershell` and `pwsh` are enabled in the repository-level executable allowlist. This does not override any outer MCP client/host allowlist. The terminal uses `shell=False`, rejects shell operators and configured dangerous command patterns, and remains subject to OS permissions. These checks are not a substitute for an OS-level sandbox.
+- **Blocked Commands**: Configured destructive command patterns (`rm -rf`, `del /s`, `format`, `shutdown`, `diskpart`, `git reset --hard`, `git push`, `git commit`) are rejected.
 - **Process Protection**: Commands run with an execution timeout (default 120s) and stdout/stderr output capping (100KB) to prevent resource exhaustion.

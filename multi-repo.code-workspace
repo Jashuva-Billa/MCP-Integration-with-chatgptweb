@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "MCP Server Engine",
+      "path": "."
+    },
+    {
+      "name": "interview-copilot",
+      "path": "../interview-copilot"
+    },
+    {
+      "name": "AI_jobs_apply",
+      "path": "../AI_jobs_apply"
+    }
+  ],
+  "settings": {
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000
+  }
+}

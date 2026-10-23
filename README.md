@@ -22,7 +22,7 @@ A production-grade, standalone **Model Context Protocol (MCP)** server that conn
           ┌────────────────┼────────────────┐
           ▼                ▼                ▼
      Repository A     Repository B     Repository C
-  (C:\Dev\RepoA)   (C:\Dev\RepoB)   (C:\Dev\RepoC)
+  (C:\\Dev\\RepoA)   (C:\\Dev\\RepoB)   (C:\\Dev\\RepoC)
           │                │                │
        VS Code          VS Code          VS Code
 ```
@@ -49,7 +49,7 @@ git clone https://github.com/Jashuva-Billa/MCP-Integration-with-chatgptweb.git
 cd MCP-Integration-with-chatgptweb
 
 python -m venv venv
-.\venv\Scripts\activate
+.\\venv\\Scripts\\activate
 pip install -r requirements.txt
 ```
 
@@ -78,11 +78,19 @@ Edit `config/repositories.json` to register your local projects:
 }
 ```
 
----
-
 ## 3. Starting the Server & Tunnel
 
-### Option A: Start Local Server Directly
+### Option A: One-Click Quick Start (Windows)
+Double-click `start.bat` in the root directory. This will:
+- Auto-detect your virtual environment (`venv`).
+- Start the standalone MCP server.
+- Start the configured HTTPS tunnel and print your public ChatGPT connector URL.
+
+Companion scripts:
+- `status_all.bat`: Checks health status and displays current endpoints.
+- `stop_all.bat`: Safely terminates the MCP server and tunnel.
+
+### Option B: Start Local Server Directly via CLI
 ```powershell
 python scripts/start.py
 ```
@@ -90,7 +98,7 @@ python scripts/start.py
 *Streamable HTTP Transport:* `http://127.0.0.1:8766/mcp`  
 *SSE Transport:* `http://127.0.0.1:8766/sse`  
 
-### Option B: Start Server with Public HTTPS Tunnel (for ChatGPT Web)
+### Option C: Start Server with Public HTTPS Tunnel via CLI (for ChatGPT Web)
 ```powershell
 python scripts/tunnel.py
 ```
@@ -122,7 +130,31 @@ Health Check:     https://<random-id>.trycloudflare.com/health
 
 ---
 
-## 5. Available MCP Tools
+## 5. Connecting with VS Code
+
+You can integrate VS Code in two complementary ways:
+
+### A. Live Code Sync (Observe ChatGPT changes in real-time)
+Open the pre-configured Multi-Root Workspace in VS Code:
+```powershell
+code multi-repo.code-workspace
+```
+Or use **Option [2]** in `start.bat`. This mounts:
+- `MCP Server` (the bridge engine)
+- `interview-copilot`
+- `AI_jobs_apply`
+
+Whenever ChatGPT Web executes `write_file()` or runs a command through the MCP server, the files change immediately on disk and appear hot-reloaded in VS Code.
+
+### B. Direct VS Code MCP Client Connection
+If you use VS Code extensions that support MCP (such as GitHub Copilot MCP preview, Cline, Roo Code, or Continue):
+- The project includes `.vscode/mcp.json` automatically configured to connect to your local MCP server:
+  - Streamable HTTP: `http://127.0.0.1:8766/mcp`
+  - SSE Transport: `http://127.0.0.1:8766/sse`
+
+---
+
+## 6. Available MCP Tools
 
 | Category | Tool | Parameters | Description |
 | :--- | :--- | :--- | :--- |
@@ -169,7 +201,7 @@ python scripts/test_connection.py
 
 ## 7. Security Model & Sandbox
 
-1. **Path Boundary Enforcement**: Every path is canonicalized and validated using `Path.resolve()`. Any path that escapes the active repository boundary (`../../`, `C:\Windows`, UNC network paths) is rejected with a `SecurityError`.
+1. **Path Boundary Enforcement**: Every path is canonicalized and validated using `Path.resolve()`. Any path that escapes the active repository boundary (`../../`, `C:\\Windows`, UNC network paths) is rejected with a `SecurityError`.
 2. **Secret Shield**: Access to sensitive files (`.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `credentials.json`, `secrets.json`, `id_rsa*`) is blocked.
 3. **Command Execution Guard**:
    - `cwd` is permanently locked to the active repository root.

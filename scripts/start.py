@@ -84,23 +84,39 @@ def start():
     return False
 
 def stop():
-    if not PID_FILE.exists():
-        print("[*] No running MCP server PID found.")
-        return
+    from app.config import settings
+    killed = False
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+            if is_pid_running(pid):
+                print(f"[*] Terminating MCP Server (PID: {pid})...")
+                subprocess.run(f"taskkill /PID {pid} /T /F", shell=True, capture_output=True)
+                killed = True
+        except Exception as e:
+            print(f"[!] Error stopping server PID: {e}")
+        finally:
+            if PID_FILE.exists():
+                PID_FILE.unlink()
+
+    # Clean up any child or lingering process listening on the port
     try:
-        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
-        if is_pid_running(pid):
-            print(f"[*] Terminating MCP Server (PID: {pid})...")
-            subprocess.run(f"taskkill /PID {pid} /T /F", shell=True, capture_output=True)
-            time.sleep(0.5)
-            print("[OK] MCP Server stopped.")
-        else:
-            print(f"[*] MCP Server (PID: {pid}) was not active.")
-    except Exception as e:
-        print(f"[!] Error stopping server: {e}")
-    finally:
-        if PID_FILE.exists():
-            PID_FILE.unlink()
+        port_cmd = f'netstat -ano | findstr :{settings.MCP_PORT}'
+        out = subprocess.check_output(port_cmd, shell=True, text=True)
+        for line in out.strip().splitlines():
+            if "LISTENING" in line:
+                parts = line.strip().split()
+                if len(parts) >= 5:
+                    p_pid = parts[-1]
+                    subprocess.run(f"taskkill /PID {p_pid} /T /F", shell=True, capture_output=True)
+                    killed = True
+    except Exception:
+        pass
+
+    if killed:
+        print("[OK] MCP Server stopped.")
+    else:
+        print("[*] MCP Server was not active.")
 
 def status():
     from app.config import settings

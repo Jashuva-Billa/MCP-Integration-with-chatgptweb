@@ -24,10 +24,6 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parent.parent / "config" / "repositories.json"
     )
 
-    # Tunnel Configuration
-    CLOUDFLARED_PATH: str = ""
-    TUNNEL_MODE: str = "quick"
-
     # Operational Safety Limits
     MAX_FILE_SIZE_BYTES: int = 2 * 1024 * 1024       # 2MB max file read/write
     MAX_COMMAND_OUTPUT_BYTES: int = 100 * 1024       # 100KB max stdout/stderr
@@ -44,12 +40,14 @@ class Settings(BaseSettings):
         ".git/config", ".git/credentials"
     ]
 
-    # Allowed Command Binaries (Allowlist)
+    # Allowed Command Binaries (Allowlist). PowerShell is explicitly enabled;
+    # terminal validation still rejects shell operators and dangerous patterns.
     ALLOWED_COMMAND_BINARIES: Set[str] = {
         "python", "python3", "pytest", "pip", "uv", "poetry",
         "npm", "node", "npx", "yarn", "pnpm",
         "git", "ruff", "mypy", "flake8", "black", "isort", "pylint",
-        "cargo", "go", "dir", "echo", "where", "cat", "findstr"
+        "cargo", "go", "dir", "echo", "where", "cat", "findstr",
+        "powershell", "pwsh"
     }
 
     # Blocked Dangerous Command Patterns (Denylist)

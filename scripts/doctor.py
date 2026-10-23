@@ -5,6 +5,8 @@ import socket
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 def check_python():
     v = sys.version_info
@@ -60,15 +62,27 @@ def check_repositories_config():
             return True
         return False
 
-def check_cloudflared():
-    try:
-        out = subprocess.check_output("where.exe cloudflared", shell=True, text=True).strip()
-        print(f"    [OK] Cloudflare Tunnel (cloudflared) detected at: {out.splitlines()[0]}")
-        return True
-    except Exception:
-        print("    [NOTICE] Cloudflare Tunnel (cloudflared) not detected in PATH.")
-        print("    To expose MCP to ChatGPT Web: winget install Cloudflare.cloudflared")
-        return False
+def check_tunnels():
+    from app.config import settings
+    if settings.NGROK_DOMAIN or settings.TUNNEL_MODE.lower() == "ngrok":
+        try:
+            out = subprocess.check_output("where.exe ngrok", shell=True, text=True).strip()
+            print(f"    [OK] Permanent ngrok Tunnel detected at: {out.splitlines()[0]}")
+            if settings.NGROK_DOMAIN:
+                print(f"    [OK] Permanent Domain configured: https://{settings.NGROK_DOMAIN}")
+            return True
+        except Exception:
+            print("    [!] ngrok requested but ngrok executable not found in PATH.")
+            return False
+    else:
+        try:
+            out = subprocess.check_output("where.exe cloudflared", shell=True, text=True).strip()
+            print(f"    [OK] Cloudflare Tunnel (cloudflared) detected at: {out.splitlines()[0]}")
+            return True
+        except Exception:
+            print("    [NOTICE] Cloudflare Tunnel (cloudflared) not detected in PATH.")
+            print("    To expose MCP to ChatGPT Web: winget install Cloudflare.cloudflared")
+            return False
 
 def run_doctor():
     print("=" * 65)
@@ -78,7 +92,7 @@ def run_doctor():
     d_ok = check_dependencies()
     pt_ok = check_port(port=8766)
     r_ok = check_repositories_config()
-    cf_ok = check_cloudflared()
+    t_ok = check_tunnels()
     print("=" * 65)
     all_ok = p_ok and d_ok and r_ok
     if all_ok:
