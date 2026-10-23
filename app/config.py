@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parent.parent / "config" / "repositories.json"
     )
 
+    # Tunnel Configuration
+    CLOUDFLARED_PATH: str = ""
+    TUNNEL_MODE: str = "quick"
+    NGROK_DOMAIN: str = ""
+    CLOUDFLARE_TUNNEL_TOKEN: str = ""
+    STATIC_TUNNEL_URL: str = ""
+
     # Operational Safety Limits
     MAX_FILE_SIZE_BYTES: int = 2 * 1024 * 1024       # 2MB max file read/write
     MAX_COMMAND_OUTPUT_BYTES: int = 100 * 1024       # 100KB max stdout/stderr

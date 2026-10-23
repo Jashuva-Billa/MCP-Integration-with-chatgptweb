@@ -1,5 +1,6 @@
 import fnmatch
 import logging
+import re
 import shlex
 from pathlib import Path
 from typing import Tuple, List, Optional, Set
@@ -78,8 +79,9 @@ class SecurityEngine:
                 logger.warning("Blocked forbidden command pattern '%s'", blocked)
                 raise SecurityError(f"Command execution blocked: '{blocked}' is strictly forbidden.")
 
-        # Do not allow shell chaining, pipes, redirects, or command substitution.
-        if any(token in normalized_cmd for token in (";", "|", "&&", "||", ">", "<", "`", "$(", "&")):
+        # Do not allow shell chaining, pipes, redirects, or command substitution outside quoted strings.
+        unquoted = re.sub(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'', '', normalized_cmd)
+        if any(token in unquoted for token in (";", "|", "&&", "||", ">", "<", "`", "$(", "&")):
             raise SecurityError("Shell operators are not permitted. Run one approved executable per request.")
 
         try:

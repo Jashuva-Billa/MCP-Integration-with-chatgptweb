@@ -5,7 +5,8 @@ from app.tools import (
     code_intelligence,
     terminal,
     git,
-    repository_analysis
+    repository_analysis,
+    quick_inspect
 )
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "code_intelligence",
     "terminal",
     "git",
-    "repository_analysis"
+    "repository_analysis",
+    "quick_inspect"
 ]
