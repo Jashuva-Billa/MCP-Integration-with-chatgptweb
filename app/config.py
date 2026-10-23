@@ -1,6 +1,5 @@
-import os
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional
+from typing import List, Set, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -18,6 +17,13 @@ class Settings(BaseSettings):
     # Authentication Configuration
     MCP_AUTH_ENABLED: bool = False
     MCP_AUTH_TOKEN: str = ""
+
+    # Optional OpenAI-compatible model provider for autonomous orchestration
+    MCP_LLM_API_KEY: str = ""
+    MCP_LLM_BASE_URL: str = "https://api.openai.com/v1"
+    MCP_LLM_MODEL: str = ""
+    MCP_LLM_INPUT_COST_PER_1M: Optional[float] = None
+    MCP_LLM_OUTPUT_COST_PER_1M: Optional[float] = None
 
     # Repository Registry Configuration
     REPOSITORIES_CONFIG_PATH: str = str(

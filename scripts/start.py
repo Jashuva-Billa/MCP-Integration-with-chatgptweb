@@ -15,7 +15,8 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 PID_FILE = RUNTIME_DIR / "mcp_server.pid"
 LOG_FILE = RUNTIME_DIR / "mcp_server.log"
 
-PYTHON_EXE = Path(sys.executable)
+VENV_PYTHON = BASE_DIR / "venv" / "Scripts" / "python.exe"
+PYTHON_EXE = VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)
 
 def is_pid_running(pid: int) -> bool:
     if pid <= 0:

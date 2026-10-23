@@ -10,6 +10,7 @@ logger = logging.getLogger("mcp_server.auth")
 
 PUBLIC_ENDPOINTS: Set[str] = {
     "/health",
+    "/tools",
     "/",
     "/favicon.ico",
     "/docs",
@@ -29,7 +30,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     """
     async def dispatch(self, request: Request, call_next) -> Response:
         # Check if auth is disabled globally
-        if not settings.MCP_AUTH_ENABLED and not settings.MCP_AUTH_TOKEN:
+        if not settings.MCP_AUTH_ENABLED:
             return await call_next(request)
 
         # Allow public health check endpoints

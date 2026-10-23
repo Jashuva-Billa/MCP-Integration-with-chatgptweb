@@ -1,4 +1,3 @@
-import pytest
 from starlette.testclient import TestClient
 from app.main import create_app
 
@@ -17,6 +16,25 @@ def test_streamable_http_and_sse_routes():
     app = create_app()
     route_paths = [getattr(r, "path", None) for r in app.routes]
     assert "/health" in route_paths
+    assert "/tools" in route_paths
     assert "/mcp" in route_paths
     assert "/sse" in route_paths
+
+
+def test_tools_endpoint():
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/tools")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_tools"] == 72
+        assert "categories" in data
+        assert "workspace_management" in data["categories"]
+        assert "command_execution" in data["categories"]
+        assert "git_write_and_remote" in data["categories"]
+        assert "task_state" in data["categories"]
+        assert "execution_profile" in data["categories"]
+        assert "autonomous_execution" in data["categories"]
+        assert "git_recovery" in data["categories"]
+
 

@@ -73,17 +73,8 @@ class SecurityEngine:
         if not normalized_cmd:
             raise SecurityError("Command string cannot be empty.")
 
-        lower_cmd = normalized_cmd.lower()
-        for blocked in self.blocked_commands:
-            if blocked.lower() in lower_cmd:
-                logger.warning("Blocked forbidden command pattern '%s'", blocked)
-                raise SecurityError(f"Command execution blocked: '{blocked}' is strictly forbidden.")
-
-        # Do not allow shell chaining, pipes, redirects, or command substitution outside quoted strings.
-        unquoted = re.sub(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'', '', normalized_cmd)
-        if any(token in unquoted for token in (";", "|", "&&", "||", ">", "<", "`", "$(", "&")):
-            raise SecurityError("Shell operators are not permitted. Run one approved executable per request.")
-
+        # Parse first so the blocklist can distinguish executable phrases from
+        # ordinary words in quoted source snippets (for example, "subprocess").
         try:
             args = shlex.split(normalized_cmd, posix=True)
         except Exception as e:
@@ -94,6 +85,32 @@ class SecurityEngine:
         binary_name = Path(args[0]).name.lower()
         if binary_name.endswith(".exe"):
             binary_name = binary_name[:-4]
+
+        # Do not allow shell chaining, pipes, redirects, or command substitution outside quoted strings.
+        unquoted = re.sub(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'', '', normalized_cmd)
+        if any(token in unquoted for token in (";", "|", "&&", "||", ">", "<", "`", "$(", "&")):
+            raise SecurityError("Shell operators are not permitted. Run one approved executable per request.")
+
+        def contains_blocked_phrase(text: str, phrase: str) -> bool:
+            pattern = r"(?<![A-Za-z0-9_])" + re.escape(phrase.lower()) + r"(?![A-Za-z0-9_])"
+            return re.search(pattern, text.lower()) is not None
+
+        for blocked in self.blocked_commands:
+            if contains_blocked_phrase(unquoted, blocked):
+                logger.warning("Blocked forbidden command pattern '%s'", blocked)
+                raise SecurityError(f"Command execution blocked: '{blocked}' is strictly forbidden.")
+
+        # PowerShell receives its script as a quoted argument, so inspect that
+        # payload separately instead of treating every quoted Python/string literal as a command.
+        if binary_name in {"powershell", "pwsh"}:
+            for index, token in enumerate(args[:-1]):
+                if token.lower() in {"-command", "-c", "-encodedcommand", "-enc"}:
+                    script = args[index + 1]
+                    for blocked in self.blocked_commands:
+                        if contains_blocked_phrase(script, blocked):
+                            logger.warning("Blocked PowerShell payload pattern '%s'", blocked)
+                            raise SecurityError(f"Command execution blocked in PowerShell payload: '{blocked}'.")
+
         if binary_name not in self.allowed_binaries:
             allowed_list = ", ".join(sorted(self.allowed_binaries))
             logger.warning("Unapproved binary '%s' rejected", binary_name)

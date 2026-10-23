@@ -20,3 +20,15 @@ def test_command_injection_and_destructive_denials():
     for attack in attacks:
         with pytest.raises(SecurityError):
             security_engine.validate_command_security(attack)
+
+
+
+def test_safe_quoted_code_is_not_blocked_by_substrings():
+    binary, args = security_engine.validate_command_security('python -c "import subprocess; print(55)"')
+    assert binary == "python"
+    assert args[0] == "python"
+
+
+def test_powerShell_payload_dangerous_command_is_blocked():
+    with pytest.raises(SecurityError):
+        security_engine.validate_command_security('powershell -Command "Remove-Item -Recurse test"')

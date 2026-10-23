@@ -2,6 +2,10 @@
 
 A production-grade, standalone **Model Context Protocol (MCP)** server that connects **ChatGPT Web** (the reasoning/coding agent) to your local repositories on Windows/macOS/Linux, while **VS Code** remains your local IDE.
 
+> **Automatic skills and superpowers:** At the start of every coding task, call `prepare_task_workflow` to choose relevant skills and capabilities, read each selected skill with `get_skill`, then inspect → edit → test/repair → verify. See [Agent Operating Protocol](docs/AGENT_OPERATING_PROTOCOL.md). The user should not need to specify skills or tools manually.
+
+> **Automatic skills and superpowers:** At the start of every coding task, call `prepare_task_workflow` to choose relevant skills and capabilities, read each selected skill with `get_skill`, then inspect → edit → test/repair → verify. See [Agent Operating Protocol](docs/AGENT_OPERATING_PROTOCOL.md). The user should not need to specify skills or tools manually.
+
 ---
 
 ## 1. Architecture Overview
@@ -30,7 +34,7 @@ A production-grade, standalone **Model Context Protocol (MCP)** server that conn
 ### Complete Separation of Concerns
 1. **Zero Contamination**: Your application repositories contain only their own project files. No MCP dependencies or server configuration files are placed in application codebases.
 2. **Generic & Reusable**: One standalone MCP server manages an arbitrary number of unrelated workspaces (Python, TypeScript, Go, Rust, etc.) without restarting.
-3. **Session Isolation**: Each conversation thread is bound to its selected repository, eliminating cross-workspace interference.
+3. **Session Isolation**: Session bookkeeping exists, but per-client isolation must be verified end-to-end before relying on concurrent repository selection.
 
 ---
 
@@ -124,9 +128,10 @@ Health Check:     https://<random-id>.trycloudflare.com/health
    - For **Streamable HTTP** (recommended): `https://<random-id>.trycloudflare.com/mcp`
    - For **SSE Transport**: `https://<random-id>.trycloudflare.com/sse`
 4. **Authentication**:
-   - If `MCP_AUTH_ENABLED=true` is set in `.env`, choose **Bearer Token** and enter your `MCP_AUTH_TOKEN`.
-   - If authentication is disabled for local testing, choose **Anonymous / None**.
-5. Save and enable the connector.
+   - Before using a public tunnel, set `MCP_AUTH_ENABLED=true` and `MCP_AUTH_TOKEN` (at least 32 random characters) in your private `.env` file. Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+   - Choose **Bearer Token** and enter that token in the connector's authentication settings.
+   - For local-only development, authentication can remain disabled when no tunnel is exposed.
+5. Save and enable the connector. HTTPS protects transport but does not make an unauthenticated local-filesystem API private. The tunnel launcher now refuses public exposure if authentication is not configured.
 
 ---
 
@@ -154,80 +159,142 @@ If you use VS Code extensions that support MCP (such as GitHub Copilot MCP previ
 
 ---
 
-## 6. Available MCP Tools
+## 6. Available MCP Tools (61 Tools Across 15 Categories)
 
-| Category | Tool | Parameters | Description |
-| :--- | :--- | :--- | :--- |
-| **Workspace** | `list_repositories` | None | Returns list of configured workspaces and their paths. |
-| | `select_repository` | `repository_name` | Switches the active workspace for subsequent operations. |
-| | `get_current_repository` | None | Returns active repository, resolved path, and Git branch. |
-| | `add_repository` | `name`, `path`, `description` | Dynamically registers a new local directory. |
-| | `remove_repository` | `name` | Removes repository from registry (never touches physical disk). |
-| **Filesystem** | `list_files` | `path="."`, `recursive=False` | Lists workspace files (excluding build dirs & secrets). |
-| | `read_file` | `path`, `start_line`, `end_line` | Reads file content safely inside active workspace. |
-| | `write_file` | `path`, `content`, `overwrite=True` | Writes or updates actual file on disk for VS Code. |
-| | `create_directory` | `path` | Creates folder structure in active workspace. |
-| | `delete_file` | `path` | Deletes a specific file inside active workspace. |
-| **Search** | `search_code` | `query`, `path="."`, `case_sensitive`, `file_extension` | Fast multi-file search with surrounding context lines. |
-| **Code Intel** | `find_symbol` | `name`, `path="."` | Finds definitions of functions, classes, and types. |
-| | `find_references` | `symbol`, `path="."` | Finds all usages and references of an identifier. |
-| | `list_functions` | `file_path` | Extracts all functions, methods, signatures, and line numbers. |
-| | `list_classes` | `file_path` | Extracts all classes, inheritance hierarchies, and methods. |
-| | `get_file_structure` | `file_path` | Returns imports, classes, and top-level function outline. |
-| **Analysis** | `analyze_repository`| None | Detects languages, frameworks, entry points, test runners, and Git state. |
-| **Terminal** | `run_command` | `command`, `timeout=120` | Executes dev commands (`pytest`, `npm test`, `ruff`) with `cwd` locked to workspace. |
-| **Git** | `git_status` | None | Inspects modified/staged/untracked working tree state. |
-| | `git_diff` | `file_path=None` | Inspects uncommitted diffs made during coding. |
-| | `git_branch` | None | Lists active and available Git branches. |
-| | `git_log` | `max_commits=10` | Shows recent commit history. |
-| | `git_show` | `commit_hash="HEAD"` | Inspects specific commit details and stats. |
-| | `git_changed_files` | None | Lists all modified, added, or deleted files. |
+The server exposes 61 specialized MCP tools across 15 capability categories:
+
+| Category | Tools | Description |
+| :--- | :--- | :--- |
+| **Workspace Management** | `list_repositories`, `select_repository`, `get_current_repository`, `add_repository`, `remove_repository` | Manage multi-repo workspaces dynamically without restarting the server. |
+| **Filesystem (Read)** | `list_files`, `read_file` | Read files safely with line slicing and secret protection. |
+| **Filesystem (Write)** | `write_file`, `create_directory` | Create or update files and directories within repo boundaries. |
+| **Filesystem (Destructive)** | `delete_file`, `delete_directory`, `move_file`, `copy_file` | Policy-gated directory deletion (with dry-run preview), file moves, and copies. |
+| **Filesystem (Safety)** | `backup_file`, `restore_file`, `diff_preview` | Checkpoint and restore files before and after editing, preview unified diffs. |
+| **Editing** | `replace_in_file` | Atomic, exact-match text replacement with occurrence verification. |
+| **Search & Intelligence** | `search_code`, `find_symbol`, `find_references`, `list_functions`, `list_classes`, `get_file_structure` | AST-based symbol definition, reference tracking, and code structural analysis. |
+| **Command Execution** | `run_command`, `run_tests`, `install_dependencies` | Policy-gated execution of approved developer commands, test runners, and package managers with process-tree cleanup and automated failure diagnostics. |
+| **Git (Read)** | `git_status`, `git_diff`, `git_branch`, `git_log`, `git_show`, `git_changed_files` | Full repository history and working tree inspection. |
+| **Git (Write & Remote)** | `git_stage`, `git_commit`, `git_create_branch`, `git_switch_branch`, `git_reset`, `git_worktree_add`, `git_worktree_remove`, `git_push`, `git_fetch`, `git_pull` | Staging, atomic commits, branch management, worktrees, and network-gated fetch/pull/push operations. |
+| **Repository Analysis** | `analyze_repository`, `inspect_workspace` | Auto-detect frameworks, test runners, entry points, and workspace summaries. |
+| **Permissions & Profiles** | `get_permission_profile`, `set_permission_profile` | Runtime inspection and switching of security permission profiles. |
+| **Execution Profile** | `get_execution_profile`, `configure_execution_profile` | Persistent autonomy, automatic skills, bounded repair loops, parallel workstream planning, Git delivery policy, and checkpoint policy. |
+| **Skills System** | `prepare_task_workflow`, `list_skills`, `get_skill`, `reload_skills` | Automatically routes tasks to relevant skills and superpowers; skill instructions are read before execution. |
+| **Lifecycle Hooks** | `list_hooks`, `fire_hook` | User-defined pre/post commands for file edits, tests, and commits (`.mcp/hooks.json`). |
+| **Autonomous Workflow & State** | `create_task`, `get_task`, `list_tasks`, `update_task_step`, `complete_task`, `add_task_issue`, `record_test_result`, `plan_repair_attempt`, `verify_task` | Multi-step planning, automated hypothesis-driven test-repair loops, and structured goal verification. |
 
 ---
 
-## 6. Running Automated Tests
+## 7. Permission Profiles & Security Model
 
-Run the full suite of unit, integration, security, and end-to-end tests:
+The server implements a centralized 4-tier capability gating engine controlled by `MCP_PERMISSION_PROFILE` in `.env`:
+
+| Capability | `safe` (Default) | `full` (Autonomous Dev) | `trusted_admin` (Full CI/CD Admin) | `unrestricted` (Local Opt-in Only) |
+| :--- | :---: | :---: | :---: | :---: |
+| Read / Search Files | ✅ | ✅ | ✅ | ✅ |
+| Write Files & Dirs | ✅ | ✅ | ✅ | ✅ |
+| Delete Files / Dirs | ❌ | ✅ | ✅ | ✅ |
+| Move / Copy Files | ❌ | ✅ | ✅ | ✅ |
+| Run Test Commands | ✅ (pytest/npm/cargo/etc.) | ✅ (All dev binaries) | ✅ (Arbitrary commands) | ✅ (Arbitrary commands) |
+| Install Dependencies | ❌ | ✅ (pip/npm/poetry/cargo) | ✅ | ✅ |
+| Git Commits & Branches | ❌ (Read only) | ✅ | ✅ | ✅ |
+| Remote Git (Fetch / Pull) | ❌ | ❌ | ✅ | ✅ |
+| Remote Git (Push) | ❌ | ❌ | ✅ | ✅ |
+| Network Access Authorization | ❌ | ❌ | ✅ | ✅ |
+| Destructive Git Hard Reset | ❌ | ❌ | ❌ | ✅ |
+| Path Traversal Beyond Workspace | ❌ | ❌ | ❌ | ✅ |
+| Command Timeout | 120 seconds | 300 seconds | 600 seconds | 600 seconds |
+| Output Secret Redaction | ✅ | ✅ | ✅ | ✅ |
+| Process Tree Cleanup on Timeout | ✅ | ✅ | ✅ | ✅ |
+
+### Robust Command Handling & Diagnostics
+- **Process Tree Cleanup**: Commands that exceed timeout are killed along with their entire process subtree (`taskkill /PID <pid> /T /F` on Windows) to prevent orphan child processes holding port or file locks.
+- **Automated Failure Diagnostics**: Non-zero exits and timeouts are automatically analyzed, classified, and paired with actionable fix recommendations:
+  - `TIMEOUT`: Suggests command optimization or profile timeout increase.
+  - `MISSING_DEPENDENCY`: Identifies missing packages or modules (e.g. `ModuleNotFoundError`).
+  - `SYNTAX_ERROR`: Pinpoints syntax errors and file locations.
+  - `TEST_FAILURE`: Identifies failed assertion count and test file.
+  - `PERMISSION_DENIED`: Detects file lock or OS privilege issues.
+  - `PORT_IN_USE`: Identifies port conflicts.
+  - `GIT_CONFLICT`: Detects merge conflicts and file conflict markers.
+- **Output Truncation Metrics**: Commands that produce massive logs report exact `output_bytes`, `stdout_truncated` (bool), and `stderr_truncated` (bool).
+
+### Switching Profiles
+- In `.env`: `MCP_PERMISSION_PROFILE=trusted_admin`
+- Or via tool at runtime: `set_permission_profile(profile="trusted_admin")`
+
+---
+
+## 8. Skills & Extensibility
+
+Skills are specialized workflow instructions located in the `skills/` directory. Built-in skills include:
+- `python-development`: Best practices for virtualenvs, type hints, pytest, and ruff.
+- `git-workflow`: Feature branch creation, commit conventions, worktree safety, and remote tracking.
+- `debugging-guide`: Systematic hypothesis-driven debugging and error reproduction.
+- `security-review`: Secret leakage scanning, OWASP top 10 checks, and path validation.
+- `test-driven-development`: Red-Green-Refactor loop and regression coverage.
+
+Agents can discover available skills with `list_skills()` and read full instructions with `get_skill(name="python-development")`.
+
+---
+
+## 9. Lifecycle Hooks (`.mcp/hooks.json`)
+
+Configure automated commands triggered during agent execution:
+- `before_file_edit` / `after_file_edit`: Run auto-formatters (e.g. `black {file}`).
+- `before_test_run` / `after_test_run`: Setup fixtures or cleanup test artifacts.
+- `before_git_commit`: Run linters (`flake8`, `eslint`) before committing.
+- `after_task_complete`: Run notification scripts or generate change summaries.
+
+---
+
+## 10. Running Automated Tests
+
+Run the full test suite (79 tests covering unit, integration, security, command diagnostics, git remote, and E2E):
 ```powershell
 python -m pytest -v
 ```
 
-Run the live connection diagnostic test:
+Run specific test suites:
 ```powershell
-python scripts/test_connection.py
+python -m pytest tests/unit/test_permissions.py -v
+python -m pytest tests/unit/test_command_diagnostics.py -v
+python -m pytest tests/unit/test_git_remote.py -v
+python -m pytest tests/unit/test_agent_workflow.py -v
+python -m pytest tests/integration/test_server_integration.py -v
 ```
 
 ---
 
-## 7. Security Model & Sandbox
+## 11. Example Prompts for ChatGPT / Claude
 
-1. **Path Boundary Enforcement**: Every path is canonicalized and validated using `Path.resolve()`. Any path that escapes the active repository boundary (`../../`, `C:\\Windows`, UNC network paths) is rejected with a `SecurityError`.
-2. **Secret Shield**: Access to sensitive files (`.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `credentials.json`, `secrets.json`, `id_rsa*`) is blocked.
-3. **Command Execution Guard**:
-   - `cwd` is permanently locked to the active repository root.
-   - Destructive commands (`format`, `shutdown`, `diskpart`, `rm -rf`, `del /s`, `git reset --hard`, `git clean -fd`) are blocked.
-   - Automatic `git commit` and `git push` are disabled.
-   - Enforces execution timeouts and caps output to 100KB.
-
----
-
-## 8. Example ChatGPT Prompts
-
-### Example 1: Discover and Inspect
-```text
-List my repositories and inspect AI_jobs_apply.
-Explain the architecture and identify the main entry points without modifying any files.
-```
-
-### Example 2: Code Search and Symbol Investigation
+### Autonomous Task Execution Loop
 ```text
 Select the AI_jobs_apply repository.
-Find where recruiter_email is resolved and explain the flow.
+Create an autonomous task to add token refresh support to the OAuth flow.
+Plan the implementation steps, inspect the existing auth module, write unit tests,
+implement the refresh logic, run the test suite, and record the final verification.
 ```
 
-### Example 3: Test-Driven Bug Fix & Verification
+### Safe Refactoring with Diff Preview
 ```text
-Fix the recruiter_email parsing issue in AI_jobs_apply.
-Run the relevant pytest test suite, inspect failures, apply the fix, rerun the tests, and show me the git diff.
-Do not modify unrelated files.
+Select the interview-copilot repository.
+Check the git status. Create a backup of src/main.py, preview the diff for removing deprecated arguments,
+apply the replacement using replace_in_file, run the test suite, and show the git diff.
 ```
+
+
+
+## Autonomous Coding with ChatGPT Web (No API Key)
+
+This setup uses the ChatGPT Web model that is already connected to the MCP server. The server executes tools and persists task state; ChatGPT Web plans the work, interprets results, and decides the next action. No separate LLM API key is needed.
+
+Key tools:
+- `run_autonomous_task` / `start_chatgpt_coding_task`: start or resume a persistent ChatGPT-driven task.
+- `record_chatgpt_task_progress`: record plan progress, test outcomes, and repair notes.
+- `finish_chatgpt_coding_task`: run final verification before marking the task complete.
+- `rollback_task_checkpoint` and `rollback_git_reset_checkpoint`: recover changes.
+- `record_chatgpt_benchmark_result` and `get_benchmark_report`: compare ChatGPT Web and Claude Code on the same cases without an API.
+
+See `docs/AUTONOMOUS_ORCHESTRATION.md` for the execution loop, checkpoint behavior, and benchmark workflow.
+
+Important: the MCP server cannot spawn independent ChatGPT Web model sessions. Reviews can be performed as separate passes in the current ChatGPT conversation, while filesystem changes remain checkpointed and permission-controlled. The API-backed benchmark runner is optional and is not needed for this workflow. Git commits and pushes are not performed unless explicitly requested.

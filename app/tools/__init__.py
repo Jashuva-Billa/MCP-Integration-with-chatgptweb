@@ -1,21 +1,25 @@
 from app.tools import (
     workspace,
     filesystem,
+    editing,
     search,
     code_intelligence,
     terminal,
     git,
     repository_analysis,
-    quick_inspect
+    quick_inspect,
+    agent,
 )
 
 __all__ = [
     "workspace",
     "filesystem",
+    "editing",
     "search",
     "code_intelligence",
     "terminal",
     "git",
     "repository_analysis",
-    "quick_inspect"
+    "quick_inspect",
+    "agent",
 ]
