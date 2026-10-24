@@ -150,3 +150,10 @@ def test_network_access_gating():
     engine_admin._rules = PROFILES[PermissionProfile.TRUSTED_ADMIN]
     engine_admin.require_network("outbound call")  # should not raise
 
+
+
+def test_policy_engine_uses_pydantic_permission_setting(monkeypatch):
+    monkeypatch.setattr(settings, "MCP_PERMISSION_PROFILE", "unrestricted")
+    engine = PolicyEngine()
+    assert engine.profile == PermissionProfile.UNRESTRICTED
+    assert engine.describe()["cmd_arbitrary"] is True

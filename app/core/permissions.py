@@ -15,7 +15,6 @@ unrestricted — arbitrary local dev commands, broad fs ops, destructive git.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import FrozenSet, Optional, Set
@@ -216,7 +215,7 @@ class PolicyEngine:
     """
 
     def __init__(self) -> None:
-        profile_name = os.environ.get("MCP_PERMISSION_PROFILE", "full").lower()
+        profile_name = settings.MCP_PERMISSION_PROFILE.strip().lower()
         try:
             self._profile = PermissionProfile(profile_name)
         except ValueError:

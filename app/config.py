@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     MCP_HOST: str = "127.0.0.1"
     MCP_PORT: int = 8766
     MCP_LOG_LEVEL: str = "INFO"
+    # Permission profile: safe | full | trusted_admin | unrestricted
+    MCP_PERMISSION_PROFILE: str = "full"
 
     # Authentication Configuration. Cloud mode always requires a strong token.
     MCP_AUTH_ENABLED: bool = False
