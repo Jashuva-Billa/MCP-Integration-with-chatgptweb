@@ -35,6 +35,8 @@ from app.tools import (
     code_intelligence,
     terminal,
     git,
+    git_provider,
+    github_auth,
     repository_analysis,
     quick_inspect,
     agent,
@@ -126,9 +128,29 @@ mcp.tool()(git.git_reset)                     # NEW
 mcp.tool()(git.git_worktree_add)              # NEW
 mcp.tool()(git.git_worktree_remove)           # NEW
 mcp.tool()(git.git_push)                      # NEW: remote push
-mcp.tool()(git.git_fetch)                     # NEW: remote fetch
-mcp.tool()(git.git_pull)                      # NEW: remote pull
+mcp.tool()(git.git_fetch)                     # remote fetch
+mcp.tool()(git.git_pull)                      # remote pull
 mcp.tool()(git.rollback_git_reset_checkpoint) # Restore hard-reset safety checkpoint
+
+# ════════════════════════════════════════════════════════════
+# 10b. GitHub onboarding (per-user local OAuth device flow)
+# ════════════════════════════════════════════════════════════
+mcp.tool()(github_auth.github_connect_start)
+mcp.tool()(github_auth.github_connect_complete)
+mcp.tool()(github_auth.github_connection_status)
+mcp.tool()(github_auth.github_list_available_repositories)
+mcp.tool()(github_auth.github_select_repositories)
+mcp.tool()(github_auth.github_disconnect)
+
+# ════════════════════════════════════════════════════════════
+# 10c. Remote Git hosting / CI/CD intelligence (read-only)
+# ════════════════════════════════════════════════════════════
+mcp.tool()(git_provider.github_repo_overview)
+mcp.tool()(git_provider.github_commit_history)
+mcp.tool()(git_provider.github_pull_requests)
+mcp.tool()(git_provider.github_workflow_runs)
+mcp.tool()(git_provider.github_workflow_jobs)
+mcp.tool()(git_provider.github_deployments)
 
 # ════════════════════════════════════════════════════════════
 # 11. Repository Analysis
@@ -216,7 +238,7 @@ async def health_check(request: Request) -> JSONResponse:
         "auth_enabled": bool(settings.MCP_AUTH_ENABLED),
         "host": settings.MCP_HOST,
         "port": settings.MCP_PORT,
-        "tool_count": 90,
+        "tool_count": 96,
     })
 
 
@@ -224,7 +246,7 @@ async def health_check(request: Request) -> JSONResponse:
 async def tool_list(request: Request) -> JSONResponse:
     """Returns a categorized list of all registered MCP tools."""
     return JSONResponse({
-        "total_tools": 90,
+        "total_tools": 96,
         "categories": {
             "workspace_management": ["list_repositories", "select_repository", "get_current_repository", "add_repository", "clone_github_repository", "remove_repository"],
             "filesystem_read": ["list_files", "read_file"],
@@ -236,6 +258,8 @@ async def tool_list(request: Request) -> JSONResponse:
             "command_execution": ["run_command", "run_tests", "install_dependencies"],
             "git_read": ["git_status", "git_diff", "git_branch", "git_log", "git_show", "git_changed_files"],
             "git_write_and_remote": ["git_stage", "git_commit", "git_create_branch", "git_switch_branch", "git_reset", "git_worktree_add", "git_worktree_remove", "git_push", "git_fetch", "git_pull"],
+            "github_onboarding": ["github_connect_start", "github_connect_complete", "github_connection_status", "github_list_available_repositories", "github_select_repositories", "github_disconnect"],
+            "github_ci_cd_read": ["github_repo_overview", "github_commit_history", "github_pull_requests", "github_workflow_runs", "github_workflow_jobs", "github_deployments"],
             "repository_analysis": ["analyze_repository", "inspect_workspace"],
             "permissions": ["get_permission_profile", "set_permission_profile"],
             "execution_profile": ["get_execution_profile", "configure_execution_profile"],

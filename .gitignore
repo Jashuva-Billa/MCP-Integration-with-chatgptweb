@@ -36,6 +36,9 @@ dist/
 .vscode/
 *.swp
 
+# Local GitHub account/repository selection (never commit per-user state)
+runtime/github_auth/
+
 # Local Configuration & Repository Registry
 config/repositories.json
 config/repositories.yaml

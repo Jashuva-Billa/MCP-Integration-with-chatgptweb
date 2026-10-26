@@ -117,6 +117,8 @@ flowchart TB
 | Code intelligence | Text search, symbol/reference discovery, function/class listings, structural inspection |
 | Terminal | Configured developer command execution, test helper, dependency installation, timeout/output limits and failure diagnostics |
 | Git | Status/diff/log/show/branches/changed files, staging/commit/branch operations, worktrees, policy-gated fetch/pull/push and recovery tools |
+| GitHub onboarding | Local GitHub Device Flow, OS-keyring token storage, repository discovery and validated per-user repository selection; requires a one-time OAuth App client ID and network authorization |
+| GitHub / CI/CD intelligence | Read-only GitHub REST tools for repository overview, remote commit history, pull requests, GitHub Actions runs/jobs/steps, and deployment history/status; uses the selected local repository allowlist |
 | Skills and hooks | Skill discovery/loading/reload, automatic workflow preparation, lifecycle hook listing/execution |
 | Task orchestration | Persistent JSON-backed task plans, step/test/issue tracking, bounded repair, task phases and checkpoint helpers |
 | Approvals | Expiring approval requests, explicit decisions, matching operation/target checks and audit logging |
@@ -326,9 +328,24 @@ Security and operational notes:
 
 See [Worker Runtime and Security](docs/WORKER_RUNTIME_SECURITY.md).
 
-### GitHub cloning and delivery
+### GitHub onboarding, repository selection, cloning and delivery
 
-Remote cloning is disabled by default and should be restricted to an explicit repository allowlist:
+For local interactive GitHub onboarding, register a GitHub OAuth App with Device Flow enabled and configure its **public client ID** as `MCP_GITHUB_CLIENT_ID` in the private `.env` (or environment). Install dependencies with `pip install -r requirements.txt`, then restart the MCP server. Individual users do not create PATs or manually edit an allowlist.
+
+Use the MCP tools in this order:
+
+1. `github_connect_start` — returns GitHub's verification URL and a one-time device code. The user enters the code directly on GitHub; never share it in chat or logs.
+2. `github_connect_complete` — call again after approving; pending authorization is reported safely. The token is stored using the OS credential store (`keyring`).
+3. `github_connection_status` — verify connection without exposing credentials.
+4. `github_list_available_repositories` — list repositories visible to the authorized user (paginate with `page`).
+5. `github_select_repositories` — pass the exact `OWNER/REPOSITORY` names the user wants this local MCP server to use. Each repo is checked against GitHub before the local selection is saved.
+6. `github_disconnect` — clear the local keyring credential and selected repository list. To revoke the grant at GitHub too, remove the app under GitHub Settings → Applications.
+
+Selected repository state is stored under `runtime/github_auth/` (ignored by Git). GitHub API tools prefer the user's keyring token and enforce the selected local allowlist. `MCP_GITHUB_TOKEN` and `MCP_GITHUB_ALLOWED_REPOS` remain supported as legacy/admin fallbacks only when no local selection file exists.
+
+**OAuth permission note:** classic OAuth Apps can require broad `repo` scope for private repository access. For production distribution, prefer a GitHub App configured with only the required repository permissions; review requested scopes before users authorize. The local allowlist limits what MCP GitHub API tools will act on, but it does not reduce the token's permissions on GitHub itself.
+
+Remote cloning is still disabled by default and should remain explicitly configured:
 
 ```dotenv
 MCP_GITHUB_CLONE_ENABLED=false
