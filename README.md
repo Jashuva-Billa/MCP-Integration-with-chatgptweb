@@ -347,6 +347,28 @@ The doctor script was originally written with Windows tunnel discovery commands;
 - **`python3: command not found`** — install Python 3 from python.org or Homebrew, then open a new Terminal.
 - **`Address already in use`** — check whether another process is listening on port `8766`, or change `MCP_PORT` in `.env`.
 - **Import errors** — ensure the intended Python installation has the project dependencies; re-run `python3 -m pip install -e ".[dev]"` using the same `python3` that launches the server.
+- **`cryptography` fails to build on macOS with `OpenSSL not found`, `pkg-config`, or `openssl-sys` errors** — pip may be building `cryptography` from source because a compatible wheel was not selected. On a Mac with Homebrew, install the OpenSSL development files and `pkg-config`, then retry the install:
+
+  ```bash
+  brew install openssl@3 pkg-config
+  export OPENSSL_DIR="$(brew --prefix openssl@3)"
+  export PKG_CONFIG_PATH="$OPENSSL_DIR/lib/pkgconfig"
+  python3 -m pip install --upgrade pip setuptools wheel
+  python3 -m pip install -e ".[dev]"
+  ```
+
+  If you only need runtime dependencies, use `python3 -m pip install -r requirements.txt` for the final command instead. Keep the `export` commands in the same Terminal session as the install. If Homebrew is not installed, install it from [brew.sh](https://brew.sh/) or install OpenSSL and `pkg-config` using your preferred package manager. Do not use `sudo` or `--break-system-packages` to force Python package installation, and do not change or downgrade dependency pins just to bypass this error before checking the OpenSSL setup.
+
+  If it still fails, collect environment details with:
+
+  ```bash
+  python3 --version
+  python3 -m pip --version
+  python3 -c "import platform; print(platform.machine())"
+  brew --prefix openssl@3
+  ```
+
+  Share the complete error output as well. Python version and architecture matter because pip may choose a source distribution instead of a prebuilt wheel.
 - **Health endpoint does not respond** — read the server output in Terminal and verify `MCP_HOST=127.0.0.1` and `MCP_PORT=8766`.
 - **A coding worker does not launch** — worker CLIs and Docker are optional; install/configure the specific CLI, authentication, sandbox image, and any required network access before enabling it.
 - **Remote ChatGPT/client access is required** — configure a tunnel and authentication separately; do not expose an unauthenticated server on a public interface.
