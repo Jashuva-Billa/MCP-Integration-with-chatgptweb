@@ -13,6 +13,7 @@ The server is the **execution and control layer**; the connected model/client is
 - [Capabilities](#capabilities)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
+- [Quick start on macOS](#quick-start-on-macos)
 - [Quick start on Windows](#quick-start-on-windows)
 - [Configuration](#configuration)
 - [Run locally](#run-locally)
@@ -181,11 +182,174 @@ MCP/
 
 - Python 3.10 or newer; Python 3.11 is used by the Dockerfile.
 - Git installed and available on PATH.
-- Windows PowerShell for the documented Windows commands; most application code is Python and uses pathlib/subprocess, but scripts and worker/container behavior can be platform-specific.
+- macOS or Windows/Linux. The MCP server core is Python-based; the included `scripts/start.py` currently uses Windows-specific process-management commands, so on macOS start it directly with `python app/main.py` as shown below.
 - Optional: Cloudflare Tunnel (`cloudflared`) or ngrok for HTTPS ingress.
 - Optional: Docker/Podman-compatible runtime and a worker image if using Docker-sandboxed CLI workers.
 - Optional: the CLI programs you configure as coding workers, and their own authentication/configuration.
 - Optional development dependencies for Ruff and test tooling.
+
+## Quick start on macOS
+
+These steps run the MCP server locally on macOS. Use Terminal and run commands from the cloned repository root. The MCP server itself does not require Docker or a tunnel for local-only use.
+
+### 1. Install the prerequisites
+
+Required:
+- **macOS** on a supported Apple Silicon or Intel Mac.
+- **Python 3.10 or newer** (Python 3.11 is recommended).
+- **Git** for cloning and for repository/Git tools.
+- **Terminal** (or another shell) and an internet connection for the initial clone and Python package installation.
+
+Check whether Python and Git are available:
+
+```bash
+python3 --version
+git --version
+```
+
+If Python 3 is missing or too old, install a current Python 3 release from [python.org](https://www.python.org/downloads/macos/) or with Homebrew. If Git is missing, install Apple's Command Line Tools with:
+
+```bash
+xcode-select --install
+```
+
+Homebrew is optional; it is a package manager, not an application requirement. If you use it, the following installs Python and Git:
+
+```bash
+brew install python git
+```
+
+Optional tools, only for the features you plan to use:
+- **Docker Desktop** — only for Docker-sandboxed coding workers; also build or obtain the configured worker image.
+- **Cloudflare Tunnel (`cloudflared`) or ngrok** — only when making the local server reachable through an HTTPS tunnel. A tunnel is not authentication.
+- **Codex CLI, Claude Code, or another worker CLI** — only if you configure that executable in `MCP_WORKER_COMMANDS`; install and authenticate each tool separately.
+- **Ruff** — installed with the development dependencies below and used for linting.
+- **A GitHub OAuth App client ID** — only if you want to use the optional GitHub Device Flow integration.
+
+### 2. Clone the repository and enter it
+
+If you have not already cloned the repository, replace the URL below with the URL for your MCP repository:
+
+```bash
+git clone <YOUR_MCP_REPOSITORY_URL>
+cd MCP
+```
+
+If the repository is already on your Mac, just `cd` to its root directory. The directory must contain `app/`, `requirements.txt`, and `pyproject.toml`.
+
+### 3. Install dependencies (without a virtual environment)
+
+The macOS launcher scripts use `python3` directly, so you do not need to create or activate a virtual environment. Install Python 3.10+ from [python.org](https://www.python.org/downloads/macos/) or Homebrew first.
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install -e ".[dev]"
+```
+
+This installs runtime dependencies plus test and lint tools. For runtime dependencies only, use:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+**macOS note:** If pip reports an externally managed environment, do not use `sudo` or `--break-system-packages` to force installation. Use a standalone Python installation from python.org or a package-manager-supported installation method. Installing without a virtual environment can cause dependency conflicts with other Python projects.
+
+### 4. Configure the environment
+
+Create a private local configuration file:
+
+```bash
+cp env.example .env
+```
+
+For local-only development, the defaults in `env.example` bind to `127.0.0.1:8766` and leave authentication disabled. Keep the server bound to loopback unless you have configured authentication, a strong token, and appropriate allowed-host/origin settings. Never commit `.env` or expose secrets in logs.
+
+### 5. Configure repositories
+
+Create the local repository registry if it does not already exist:
+
+```bash
+cp config/repositories.example.json config/repositories.json
+```
+
+Edit `config/repositories.json` and replace the example Windows paths with absolute macOS paths, for example:
+
+```json
+{
+  "repositories": {
+    "my-app": {
+      "path": "/Users/YOUR_USER/Developer/my-app",
+      "description": "My application repository",
+      "enabled": true
+    }
+  }
+}
+```
+
+Register only repositories you want this server to control. The repository paths in this example are placeholders; use real paths on your Mac. The registry is machine-specific and should be reviewed before committing.
+
+### 6. Start the server on macOS
+
+**Convenience option — double-click the macOS launcher files in Finder.** The `.command` scripts are macOS equivalents of the Windows `.bat` launchers. They run the local server only; they do not start a public Cloudflare/ngrok tunnel.
+
+Make the launchers executable once, from Terminal in the repository root:
+
+```bash
+chmod +x start.command stop.command status.command
+```
+
+Then double-click:
+- `start.command` — starts the local MCP server in the background and writes logs to `runtime/mcp_server.log`.
+- `status.command` — checks the recorded process and the local health endpoint.
+- `stop.command` — stops the server process recorded by this project.
+
+If macOS asks you to confirm opening a script downloaded from the internet, review the file and use Finder's Open option if you trust the repository. Keep the server bound to localhost unless authentication and network access are deliberately configured.
+
+You can also start the server directly from Terminal:
+
+```bash
+python3 app/main.py
+```
+
+The included `scripts/start.py` and `scripts/tunnel.py` helpers use Windows-specific process-management commands in places, so use the `.command` scripts for local server control on macOS. The macOS launchers do not manage a tunnel.
+
+By default, the server listens at `http://127.0.0.1:8766`.
+
+In a second Terminal window, you can check the health endpoint:
+
+```bash
+curl http://127.0.0.1:8766/health
+```
+
+Other local endpoints:
+- Health: `http://127.0.0.1:8766/health`
+- Registered tool categories: `http://127.0.0.1:8766/tools`
+- MCP Streamable HTTP: `http://127.0.0.1:8766/mcp`
+- MCP SSE compatibility endpoint: `http://127.0.0.1:8766/sse`
+- Dashboard: `http://127.0.0.1:8766/dashboard` (if enabled)
+
+When you start the server directly in Terminal, use `Control-C` to stop that foreground process. When you use `start.command`, use `stop.command` to stop the background process.
+
+### 7. Verify the setup
+
+Run these commands with the same Python installation used to install dependencies (no virtual environment activation is needed):
+
+```bash
+python3 scripts/doctor.py
+python3 scripts/test_connection.py
+python3 -m pytest
+```
+
+The doctor script was originally written with Windows tunnel discovery commands; its core Python, dependency, port, and repository checks can still be useful, but tunnel detection may report a warning on macOS. Tunnel tooling is optional for a local run. The connection test performs filesystem write/delete checks in the active repository context, so review the script and run it only in a test workspace where that behavior is acceptable.
+
+### macOS troubleshooting
+
+- **`python3: command not found`** — install Python 3 from python.org or Homebrew, then open a new Terminal.
+- **`Address already in use`** — check whether another process is listening on port `8766`, or change `MCP_PORT` in `.env`.
+- **Import errors** — ensure the intended Python installation has the project dependencies; re-run `python3 -m pip install -e ".[dev]"` using the same `python3` that launches the server.
+- **Health endpoint does not respond** — read the server output in Terminal and verify `MCP_HOST=127.0.0.1` and `MCP_PORT=8766`.
+- **A coding worker does not launch** — worker CLIs and Docker are optional; install/configure the specific CLI, authentication, sandbox image, and any required network access before enabling it.
+- **Remote ChatGPT/client access is required** — configure a tunnel and authentication separately; do not expose an unauthenticated server on a public interface.
 
 ## Quick start on Windows
 

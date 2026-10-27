@@ -1,0 +1,2 @@
+# Keep macOS shell launchers executable-friendly with Unix line endings.
+*.command text eol=lf
